@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.09"
+APP_VERSION = "v1.11"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -227,31 +227,41 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     location_lower = location.lower()
     queries = []
     
-    # Check if location already contains target area (avoid duplication)
-    target_lower = target_display_name.lower()
-    target_words = [w.strip() for w in target_lower.split(',')]
+    # Check if location already contains sufficient context (avoid duplication)
+    # We need to be smart: just containing the city name isn't enough - we need city + state/country
+    city = target_components.get('city', '').lower()
+    state = target_components.get('state', '').lower()
+    country = target_components.get('country', '').lower()
     
-    # If location already contains any significant part of target, return as-is
-    for word in target_words:
-        if len(word) > 3 and word in location_lower:
-            return [location]
+    # Check if location already contains multiple target components (city + state, or city + country)
+    # This means it's likely already contextualized
+    has_city = city and city in location_lower
+    has_state = state and state in location_lower
+    has_country = country and country in location_lower
+    
+    # Only skip adding context if location has city AND (state OR country)
+    # This prevents cases like "Adelaide Cbd" from skipping context when it needs it
+    if has_city and (has_state or has_country):
+        # Location seems already contextualized, but still add a fallback with just the location
+        queries.append(location)
+        return queries
     
     # Build queries from most specific to least specific
-    city = target_components.get('city', '')
-    state = target_components.get('state', '')
-    country = target_components.get('country', '')
+    city_val = target_components.get('city', '')
+    state_val = target_components.get('state', '')
+    country_val = target_components.get('country', '')
     
     # Query 1: Full context (most specific)
     if target_display_name:
         queries.append(f"{location}, {target_display_name}")
     
     # Query 2: City + State + Country (if we have all components)
-    if city and state and country:
-        queries.append(f"{location}, {city}, {state}, {country}")
+    if city_val and state_val and country_val:
+        queries.append(f"{location}, {city_val}, {state_val}, {country_val}")
     
     # Query 3: City + Country (simpler)
-    if city and country:
-        queries.append(f"{location}, {city}, {country}")
+    if city_val and country_val:
+        queries.append(f"{location}, {city_val}, {country_val}")
     
     # Query 4: Just location (fallback)
     queries.append(location)
