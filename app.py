@@ -592,38 +592,109 @@ st.sidebar.markdown("""
 That's it!
 """)
 
-# Add custom CSS to make upload drop area bigger
+# Add custom CSS to make upload drop area bigger and responsive
 st.markdown("""
 <style>
     /* Target the main file uploader container */
     [data-testid="stFileUploader"] {
+        height: 450px !important;
         min-height: 450px !important;
     }
     /* Target the drop zone wrapper */
     [data-testid="stFileUploader"] > div {
+        height: 450px !important;
         min-height: 450px !important;
     }
-    /* Target the actual interactive drop area */
+    /* Target the actual interactive drop area - the border box */
     [data-testid="stFileUploader"] > div > div {
+        height: 450px !important;
         min-height: 450px !important;
-        padding: 50px !important;
+        padding: 30px !important;
+        border: 2px dashed #ccc !important;
+        border-radius: 8px !important;
+        transition: all 0.3s ease !important;
+        box-sizing: border-box !important;
+    }
+    /* Hover state */
+    [data-testid="stFileUploader"] > div > div:hover {
+        border-color: #1f77b4 !important;
+        background-color: rgba(31, 119, 180, 0.05) !important;
+        transform: scale(1.01) !important;
+    }
+    /* Drag over state - when file is being dragged */
+    [data-testid="stFileUploader"] > div > div.drag-over {
+        border-color: #1f77b4 !important;
+        background-color: rgba(31, 119, 180, 0.1) !important;
+        border-width: 3px !important;
+        transform: scale(1.02) !important;
     }
     /* Target the drop zone content area */
     [data-testid="stFileUploader"] > div > div > div {
-        min-height: 350px !important;
+        height: 100% !important;
+        min-height: 390px !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
     }
-    /* Ensure the border/background area is large */
-    [data-testid="stFileUploader"] > div > div[class*="upload"] {
-        min-height: 450px !important;
+    /* Make the file input area larger */
+    [data-testid="stFileUploader"] input[type="file"] {
+        height: 100% !important;
+        min-height: 390px !important;
+        width: 100% !important;
+        cursor: pointer !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        opacity: 0 !important;
+    }
+    /* Style the text inside */
+    [data-testid="stFileUploader"] > div > div > div > div {
+        font-size: 16px !important;
+        pointer-events: none !important;
     }
     .stTextInput > div > div > input {
         font-size: 18px !important;
         padding: 12px !important;
     }
 </style>
+<script>
+    // Add drag-over class when file is dragged over - handle Streamlit's dynamic rendering
+    function setupDragOver() {
+        const fileUploader = document.querySelector('[data-testid="stFileUploader"]');
+        if (fileUploader) {
+            const dropZone = fileUploader.querySelector('div > div');
+            if (dropZone && !dropZone.hasAttribute('data-drag-setup')) {
+                dropZone.setAttribute('data-drag-setup', 'true');
+                
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.classList.add('drag-over');
+                    }, false);
+                });
+                
+                ['dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.classList.remove('drag-over');
+                    }, false);
+                });
+            }
+        }
+    }
+    
+    // Run on load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupDragOver);
+    } else {
+        setupDragOver();
+    }
+    
+    // Also run periodically to catch Streamlit re-renders
+    setInterval(setupDragOver, 1000);
+</script>
 """, unsafe_allow_html=True)
 
 # Main input widgets
