@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.17"
+APP_VERSION = "v1.13"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -82,93 +82,22 @@ else:
     openai_client = None
 
 # Display logo and developer info
-# Main headline (no version) and styling
-st.markdown("""
-<style>
-    /* Force light theme - override Streamlit dark mode */
-    .stApp {
-        background-color: #ffffff !important;
-    }
-    [data-testid="stAppViewContainer"] {
-        background-color: #ffffff !important;
-    }
-    [data-testid="stHeader"] {
-        background-color: #ffffff !important;
-    }
-    /* Override Streamlit's default dark text */
-    .stMarkdown, p, h1, h2, h3, h4, h5, h6 {
-        color: #000000 !important;
-    }
-    div[data-testid="stMarkdownContainer"] p {
-        color: #000000 !important;
-    }
-    /* Ensure sidebar is light */
-    [data-testid="stSidebar"] {
-        background-color: #f8f9fa !important;
-    }
-    [data-testid="stSidebar"] * {
-        color: #000000 !important;
-    }
-    [data-testid="stSidebar"] .stMarkdown {
-        color: #000000 !important;
-    }
-    /* Override any dark theme text colors */
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] h1,
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3 {
-        color: #000000 !important;
-    }
-    
-    .main-headline {
-        font-size: 4rem;
-        font-weight: 800;
-        color: #000 !important;
-        margin-bottom: 1rem;
-        text-align: center;
-        margin-top: 1rem;
-        line-height: 1.2;
-    }
-    .subheadline {
-        font-size: 1.75rem;
-        color: #555 !important;
-        text-align: center;
-        margin-bottom: 1.5rem;
-        font-weight: 500;
-        line-height: 1.6;
-    }
-    .dev-info {
-        font-size: 0.875rem;
-        color: #888 !important;
-        text-align: center;
-        margin-top: 1.5rem;
-        margin-bottom: 1.5rem;
-        padding-bottom: 1.5rem;
-        border-bottom: 1px solid #e5e5e5;
-    }
-    .dev-info a {
-        color: #ff6603 !important;
-        text-decoration: none;
-        font-weight: 500;
-    }
-    .dev-info a:hover {
-        text-decoration: underline;
-    }
-    .dev-info p {
-        color: #888 !important;
-    }
-</style>
-""", unsafe_allow_html=True)
+logo_path = "assets/logo.png"
+if os.path.exists(logo_path):
+    st.image(logo_path, width=300)
 
-st.markdown('<h1 class="main-headline">Location Search Term Filter</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subheadline">Filter and analyze location-based search terms from Google Ads</p>', unsafe_allow_html=True)
+# Developer information
+st.markdown("---")
+col1, col2, col3 = st.columns([1, 1, 1])
+with col1:
+    st.markdown("**Developed by Nathan Shapiro**")
+with col2:
+    st.markdown(f"**App version: {APP_VERSION}**")
+with col3:
+    st.markdown("**Visit us: [Paretoleads.com](https://paretoleads.com)**")
+st.markdown("---")
 
-# Developer information below headline
-st.markdown("""
-<div class="dev-info">
-    <p>Developed by Nathan Shapiro • App version: """ + APP_VERSION + """ • <a href="https://paretoleads.com" target="_blank">Visit us: Paretoleads.com</a></p>
-</div>
-""", unsafe_allow_html=True)
+st.title(f"Location Search Term Filter ({APP_VERSION})")
 
 
 # -------- Helpers -------- #
@@ -666,201 +595,52 @@ st.sidebar.markdown("""
 That's it!
 """)
 
-# Comprehensive styling inspired by file transfer sites
+# Add custom CSS to make upload area bigger
 st.markdown("""
 <style>
-    /* Additional light theme overrides */
-    [data-testid="stFileUploader"] label,
-    [data-testid="stFileUploader"] p,
-    [data-testid="stFileUploader"] span {
-        color: #000000 !important;
+    .uploadedFile {
+        min-height: 200px !important;
+        padding: 40px !important;
     }
-    .stTextInput label,
-    .stTextInput p {
-        color: #000000 !important;
+    .stFileUploader > div {
+        min-height: 200px !important;
     }
-    
-    /* Upload area styling - large rectangular area */
     [data-testid="stFileUploader"] {
-        border: 2px solid #e0e0e0 !important;
-        border-radius: 12px;
-        background-color: #ffffff !important;
-        min-height: 280px !important;
-        padding: 60px 40px !important;
-        transition: all 0.3s ease;
-    }
-    [data-testid="stFileUploader"]:hover {
-        border-color: #ff6603 !important;
-        background-color: #fff5f0 !important;
+        min-height: 200px !important;
     }
     [data-testid="stFileUploader"] > div {
-        min-height: 280px !important;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        background-color: transparent !important;
+        min-height: 200px !important;
+        padding: 30px !important;
     }
-    [data-testid="stFileUploader"] .uploadedFile {
-        min-height: 280px !important;
-        padding: 60px 40px !important;
-        background-color: #ffffff !important;
-    }
-    /* Force upload area text to be dark */
-    [data-testid="stFileUploader"] * {
-        color: #000000 !important;
-    }
-    
-    /* Target area input styling */
     .stTextInput > div > div > input {
         font-size: 18px !important;
-        padding: 16px 20px !important;
-        border-radius: 8px;
-        border: 2px solid #e0e0e0 !important;
-        transition: border-color 0.3s ease;
-        background-color: #ffffff !important;
-        color: #000000 !important;
-    }
-    .stTextInput > div > div > input::placeholder {
-        color: #999999 !important;
-    }
-    .stTextInput > div > div > input:focus {
-        border-color: #ff6603 !important;
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(255, 102, 3, 0.1);
-    }
-    
-    /* CTA Button styling - ParetoLeads orange */
-    .stButton > button {
-        background-color: #ff6603 !important;
-        color: white !important;
-        font-size: 18px !important;
-        font-weight: 700 !important;
-        padding: 18px 40px !important;
-        border-radius: 8px;
-        border: none;
-        min-height: 60px !important;
-        width: 100%;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 12px rgba(255, 102, 3, 0.3);
-    }
-    .stButton > button:hover {
-        background-color: #e55a00 !important;
-        box-shadow: 0 6px 16px rgba(255, 102, 3, 0.4);
-        transform: translateY(-2px);
-    }
-    .stButton > button:active {
-        transform: translateY(0);
-    }
-    
-    /* Section spacing */
-    .main-container {
-        max-width: 1000px;
-        margin: 0 auto;
-        padding: 0 40px;
-        background-color: #ffffff !important;
-    }
-    
-    /* Input labels - bigger and brighter */
-    .input-label {
-        font-size: 22px;
-        font-weight: 700;
-        color: #000 !important;
-        margin-bottom: 6px;
-        display: block;
-    }
-    
-    /* Reduce gap between label and widget */
-    .stFileUploader {
-        margin-top: 6px !important;
-    }
-    .stTextInput {
-        margin-top: 6px !important;
-    }
-    
-    /* Remove default Streamlit spacing */
-    .element-container {
-        margin-bottom: 2.5rem;
-    }
-    
-    /* Add bigger gap before CTA button */
-    .cta-spacing {
-        margin-top: 2.5rem;
-    }
-    
-    /* Override any remaining dark theme elements */
-    .stExpander label,
-    .stExpander p {
-        color: #000000 !important;
-    }
-    [data-testid="stExpander"] {
-        background-color: #ffffff !important;
-    }
-    
-    /* Force light theme for Streamlit status elements */
-    .stAlert,
-    [data-testid="stAlert"] {
-        background-color: #ffffff !important;
-    }
-    .stAlert p,
-    .stAlert div {
-        color: #000000 !important;
-    }
-    /* Captions should be dark on light background */
-    .stCaption {
-        color: #666666 !important;
-    }
-    /* Info boxes */
-    [data-baseweb="notification"] {
-        background-color: #ffffff !important;
-        color: #000000 !important;
-    }
-    /* Ensure all text in main content area is dark */
-    .main .block-container {
-        background-color: #ffffff !important;
-    }
-    .main .block-container * {
-        color: #000000 !important;
-    }
-    /* Override Streamlit's default text colors */
-    .element-container p,
-    .element-container span,
-    .element-container div {
-        color: #000000 !important;
+        padding: 12px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Main container with centered content
-st.markdown('<div class="main-container">', unsafe_allow_html=True)
-
-# Upload CSV section
-st.markdown('<label class="input-label">Upload CSV from Google Ads</label>', unsafe_allow_html=True)
+# Main input widgets
+st.markdown("### Upload CSV")
 uploaded = st.file_uploader(
-    "Drag and drop your CSV file here or click to browse",
+    "Upload CSV from Google Ads",
     type=["csv"],
-    help="Upload your Google Ads search terms CSV file",
-    label_visibility="collapsed"
+    help="Upload your Google Ads search terms CSV file"
 )
 
-# Target Area section  
-st.markdown('<label class="input-label">Target Area</label>', unsafe_allow_html=True)
+st.markdown("### Target Area")
 target_area = st.text_input(
-    "Enter target area (e.g., Adelaide, Australia)",
+    "Target area (city/region/country)",
     value="Melbourne, Australia",
-    help="Enter the target area you want to filter locations for",
-    label_visibility="collapsed"
+    help="Enter the target area you want to filter locations for (e.g., 'Adelaide, Australia')"
 )
 
 # Advanced settings in sidebar
 with st.sidebar.expander("⚙️ Advanced Settings"):
     throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
 
-# Run button with rocket emoji and bigger gap above
-st.markdown('<div class="cta-spacing"></div>', unsafe_allow_html=True)
-run_button = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
+# Run button
+st.markdown("### Run Analysis")
+run_button = st.button("🚀 Run", type="primary", use_container_width=True)
 
 # Technical details in collapsible section
 with st.expander("🔧 Technical Details & Status"):
