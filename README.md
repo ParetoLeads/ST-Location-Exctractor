@@ -16,6 +16,12 @@ streamlit run app.py
 - Geocodes each search term; classifies locations as inside/outside the target area; caches requests per session.
 - Shows aggregated impressions for keep vs exclude and provides CSV downloads.
 
+### If geocoding is blocked on your host
+- Set an alternate geocoder endpoint via environment variables when deploying:
+  - `GEOCODER_URL=https://geocode.maps.co/search` (or another OSM-compatible endpoint)
+  - `GEOCODER_API_KEY=<your key>` if the service requires it (maps.co supports free API keys).
+- Default remains `https://nominatim.openstreetmap.org/search`.
+
 ## Hosting / sharing
 - Easiest: Streamlit Community Cloud (free for small workloads). Push this repo to GitHub and deploy via https://share.streamlit.io/.
 - Other options: run `streamlit run app.py` on a small VM (Fly.io/Render/EC2) with HTTPS via a reverse proxy; keep Nominatim rate limits in mind.
