@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.11"
+APP_VERSION = "v1.13"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -81,11 +81,23 @@ if OPENAI_AVAILABLE and OPENAI_API_KEY:
 else:
     openai_client = None
 
+# Display logo and developer info
+logo_path = "assets/logo.png"
+if os.path.exists(logo_path):
+    st.image(logo_path, width=300)
+
+# Developer information
+st.markdown("---")
+col1, col2, col3 = st.columns([1, 1, 1])
+with col1:
+    st.markdown("**Developed by Nathan Shapiro**")
+with col2:
+    st.markdown(f"**App version: {APP_VERSION}**")
+with col3:
+    st.markdown("**Visit us: [Paretoleads.com](https://paretoleads.com)**")
+st.markdown("---")
+
 st.title(f"Location Search Term Filter ({APP_VERSION})")
-st.write(
-    "Upload a CSV of search terms with impressions, enter a target area (e.g., "
-    "`Melbourne, Australia`), and get keep vs exclude location suggestions."
-)
 
 
 # -------- Helpers -------- #
@@ -572,39 +584,85 @@ def download_link(label: str, df: pd.DataFrame, filename: str, key: str):
 
 
 # -------- UI -------- #
-st.sidebar.header("How to use")
-st.sidebar.markdown(
-    "- Upload CSV (Google Ads format supported - auto-detects 'Search term' and 'Impr.' columns).\n"
-    "- Duplicate search terms are automatically aggregated (impressions summed).\n"
-    "- **🤖 Location extraction**: Uses AI (OpenAI) to intelligently extract location names from any search term - no hardcoding needed!\n"
-    "- Enter target area (e.g., `Melbourne, Australia`).\n"
-    "- Progress indicators show what's happening at each step.\n"
-    "- Output shows keep vs exclude by location with aggregated impressions."
+st.sidebar.markdown("## How to use")
+st.sidebar.markdown("""
+**1. Upload CSV from Google Ads ST**
+
+**2. Input the target area**
+
+**3. Hit Run**
+
+That's it!
+""")
+
+# Add custom CSS to make upload area bigger
+st.markdown("""
+<style>
+    .uploadedFile {
+        min-height: 200px !important;
+        padding: 40px !important;
+    }
+    .stFileUploader > div {
+        min-height: 200px !important;
+    }
+    [data-testid="stFileUploader"] {
+        min-height: 200px !important;
+    }
+    [data-testid="stFileUploader"] > div {
+        min-height: 200px !important;
+        padding: 30px !important;
+    }
+    .stTextInput > div > div > input {
+        font-size: 18px !important;
+        padding: 12px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Main input widgets
+st.markdown("### Upload CSV")
+uploaded = st.file_uploader(
+    "Upload CSV from Google Ads",
+    type=["csv"],
+    help="Upload your Google Ads search terms CSV file"
 )
 
-uploaded = st.file_uploader("Upload CSV", type=["csv"])
-target_area = st.text_input("Target area (city/region/country)", value="Melbourne, Australia")
-throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
+st.markdown("### Target Area")
+target_area = st.text_input(
+    "Target area (city/region/country)",
+    value="Melbourne, Australia",
+    help="Enter the target area you want to filter locations for (e.g., 'Adelaide, Australia')"
+)
 
-st.caption(f"Geocoder URL: {GEOCODER_URL}")
-st.caption(f"Geocoder API key: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
+# Advanced settings in sidebar
+with st.sidebar.expander("⚙️ Advanced Settings"):
+    throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
 
-# Show OpenAI status with warning if package not available
-if not OPENAI_AVAILABLE:
-    st.error("⚠️ **OpenAI package not installed!** The `openai` package is missing. Please check the debug section below for fix instructions.")
-elif openai_client:
-    st.caption(f"🤖 OpenAI API: ✅ Enabled (using LLM for intelligent location extraction)")
-else:
-    st.warning(f"🤖 OpenAI API: ⚠️ API key found but client not initialized. Check debug section.")
-if GEOCODER_API_KEY:
-    # Show key length for debugging (without exposing the actual key)
-    st.caption(f"Geocoder key length: {len(GEOCODER_API_KEY)} characters")
-    # Show first/last 4 chars for verification (without exposing full key)
-    if len(GEOCODER_API_KEY) >= 8:
-        st.caption(f"Geocoder key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
-st.caption(f"App version: {APP_VERSION}")
+# Run button
+st.markdown("### Run Analysis")
+run_button = st.button("🚀 Run", type="primary", use_container_width=True)
 
-# Comprehensive Debug Section
+# Technical details in collapsible section
+with st.expander("🔧 Technical Details & Status"):
+    st.caption(f"Geocoder URL: {GEOCODER_URL}")
+    st.caption(f"Geocoder API key: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
+    
+    # Show OpenAI status with warning if package not available
+    if not OPENAI_AVAILABLE:
+        st.error("⚠️ **OpenAI package not installed!** The `openai` package is missing. Please check the debug section below for fix instructions.")
+    elif openai_client:
+        st.caption(f"🤖 OpenAI API: ✅ Enabled (using LLM for intelligent location extraction)")
+    else:
+        st.warning(f"🤖 OpenAI API: ⚠️ API key found but client not initialized. Check debug section.")
+    if GEOCODER_API_KEY:
+        # Show key length for debugging (without exposing the actual key)
+        st.caption(f"Geocoder key length: {len(GEOCODER_API_KEY)} characters")
+        # Show first/last 4 chars for verification (without exposing full key)
+        if len(GEOCODER_API_KEY) >= 8:
+            st.caption(f"Geocoder key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
+    st.caption(f"App version: {APP_VERSION}")
+
+# Comprehensive Debug Section (moved inside Technical Details)
 with st.expander("🔍 **DEBUG INFO - Copy this if you need help**"):
     debug_info = []
     debug_info.append("## OpenAI Configuration Debug")
@@ -758,7 +816,16 @@ if GEOCODER_API_KEY and "geocode.maps.co" in GEOCODER_URL:
                 st.error(f"Error: {e}")
 
 
-if uploaded and target_area.strip():
+# Only process if Run button is clicked and inputs are provided
+if run_button:
+    if not uploaded:
+        st.error("❌ Please upload a CSV file first.")
+        st.stop()
+    if not target_area.strip():
+        st.error("❌ Please enter a target area.")
+        st.stop()
+
+if run_button and uploaded and target_area.strip():
     # Step 1: Read and clean CSV
     status_container = st.container()
     with status_container:
@@ -1152,6 +1219,7 @@ if uploaded and target_area.strip():
     audit_summary_df = pd.DataFrame(audit_summary)
     with st.expander("📊 Audit Summary Table"):
         st.dataframe(audit_summary_df)
-else:
-    st.info("Upload a CSV and set a target area to begin.")
+elif not run_button:
+    # Show initial state message only if Run hasn't been clicked
+    st.info("👆 Upload a CSV file, enter a target area, and click 'Run' to begin.")
 
