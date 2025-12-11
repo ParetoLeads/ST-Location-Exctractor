@@ -883,16 +883,30 @@ if uploaded and target_area.strip():
     total_locations = len(df_locations)
     geocoded_count = 0
     unmatched_count = 0
-    debug_info = []  # Store debug info for unmatched locations
+    audit_log = []  # Comprehensive audit log for all locations
     
     for idx, row in df_locations.iterrows():
         extracted_location = row["extracted_location"]
         original_terms = row["original_search_term"]
         impressions = row["impressions"]
         
+        # Initialize audit log entry for this location
+        audit_entry = {
+            "original_search_terms": original_terms,
+            "extracted_location": extracted_location,
+            "impressions": impressions,
+            "queries_tried": [],
+            "successful_query": None,
+            "geocoded_result": None,
+            "inside_target": None,
+            "status": None,
+            "reasoning": []
+        }
+        
         # Build contextualized queries with fallback options
         queries = _build_contextualized_query(extracted_location, target_components, target_display_name)
         primary_query = queries[0] if queries else extracted_location
+        audit_entry["queries_tried"] = queries.copy()
         
         # Update progress
         progress = (idx + 1) / total_locations
@@ -915,18 +929,19 @@ if uploaded and target_area.strip():
             
             if result is not None:
                 successful_query = query
+                audit_entry["successful_query"] = query
+                audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}'")
                 break
             else:
-                error_messages.append(f"Query {query_idx + 1} ('{query}'): {error or 'No results'}")
+                error_msg = error or "No results returned"
+                error_messages.append(f"Query {query_idx + 1} ('{query}'): {error_msg}")
+                audit_entry["reasoning"].append(f"Query {query_idx + 1} failed: '{query}' → {error_msg}")
         
         if result is None:
             unmatched_count += 1
-            # Store debug info
-            debug_info.append({
-                "location": extracted_location,
-                "queries_tried": queries,
-                "errors": error_messages
-            })
+            audit_entry["status"] = "unmatched"
+            audit_entry["reasoning"].append("All queries failed - location could not be geocoded")
+            audit_log.append(audit_entry)
             all_records.append(
                 {
                     "extracted_location": extracted_location,
@@ -941,16 +956,42 @@ if uploaded and target_area.strip():
             continue
 
         geocoded_count += 1
+        geocoded_name = result.get("display_name", "")
+        geocoded_lat = result.get("lat")
+        geocoded_lon = result.get("lon")
+        
+        # Check if inside target area
         inside = is_inside(result, target_geom)
-        status = "keep" if inside else "exclude" if inside is False else "unmatched"
+        audit_entry["geocoded_result"] = {
+            "name": geocoded_name,
+            "lat": geocoded_lat,
+            "lon": geocoded_lon
+        }
+        audit_entry["inside_target"] = inside
+        
+        # Determine status
+        if inside is True:
+            status = "keep"
+            audit_entry["status"] = "keep"
+            audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is INSIDE target area '{target_display_name}'")
+        elif inside is False:
+            status = "exclude"
+            audit_entry["status"] = "exclude"
+            audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is OUTSIDE target area '{target_display_name}'")
+        else:
+            status = "unmatched"
+            audit_entry["status"] = "unmatched"
+            audit_entry["reasoning"].append(f"Could not determine if '{geocoded_name}' is inside/outside target area (geometry check returned None)")
+        
+        audit_log.append(audit_entry)
         all_records.append(
             {
                 "extracted_location": extracted_location,
                 "original_search_terms": original_terms,
                 "impressions": impressions,
-                "geocoded_name": result.get("display_name", ""),
-                "lat": result.get("lat"),
-                "lon": result.get("lon"),
+                "geocoded_name": geocoded_name,
+                "lat": geocoded_lat,
+                "lon": geocoded_lon,
                 "status": status,
             }
         )
@@ -1007,22 +1048,100 @@ if uploaded and target_area.strip():
         )
         with st.expander("View unmatched locations"):
             st.dataframe(unmatched_df[["extracted_location", "original_search_terms", "impressions"]])
+    
+    # Comprehensive Audit Log
+    st.subheader("📋 Audit Log - Complete Workflow")
+    st.info(
+        "This log shows the complete workflow for each location: original search terms → extracted location → "
+        "geocoding queries tried → results → final status. Use this to audit and debug the process."
+    )
+    
+    # Create formatted audit log text
+    audit_log_text = []
+    audit_log_text.append("=" * 80)
+    audit_log_text.append("AUDIT LOG - Location Geocoding Workflow")
+    audit_log_text.append("=" * 80)
+    audit_log_text.append(f"Target Area (Input): {target_area}")
+    audit_log_text.append(f"Target Area (Geocoded): {target_display_name}")
+    if target_components:
+        audit_log_text.append("Target Components Extracted:")
+        if target_components.get('city'):
+            audit_log_text.append(f"  City: {target_components['city']}")
+        if target_components.get('state'):
+            audit_log_text.append(f"  State/Province: {target_components['state']}")
+        if target_components.get('country'):
+            audit_log_text.append(f"  Country: {target_components['country']}")
+    audit_log_text.append("")
+    audit_log_text.append(f"Total Locations Processed: {total_locations}")
+    audit_log_text.append(f"Successfully Geocoded: {geocoded_count}")
+    audit_log_text.append(f"Unmatched: {unmatched_count}")
+    audit_log_text.append("")
+    audit_log_text.append("=" * 80)
+    audit_log_text.append("")
+    
+    for idx, entry in enumerate(audit_log, 1):
+        audit_log_text.append(f"LOCATION #{idx}")
+        audit_log_text.append("-" * 80)
+        audit_log_text.append(f"Original Search Terms: {entry['original_search_terms']}")
+        audit_log_text.append(f"Extracted Location: {entry['extracted_location']}")
+        audit_log_text.append(f"Impressions: {entry['impressions']}")
+        audit_log_text.append("")
         
-        # Show debug information about what queries were tried
-        if debug_info:
-            with st.expander("🔍 Debug: Queries tried for unmatched locations"):
-                st.info("This shows what geocoding queries were attempted for each unmatched location. "
-                       "This can help identify if the issue is with query formatting or if the locations don't exist in the geocoding database.")
-                for debug_item in debug_info:
-                    st.markdown(f"**{debug_item['location']}**")
-                    st.write("Queries tried:")
-                    for i, query in enumerate(debug_item['queries_tried'], 1):
-                        st.code(f"{i}. {query}")
-                    if debug_item['errors']:
-                        st.write("Errors:")
-                        for error in debug_item['errors']:
-                            st.caption(f"  • {error}")
-                    st.markdown("---")
+        audit_log_text.append("Geocoding Queries Tried:")
+        for i, query in enumerate(entry['queries_tried'], 1):
+            marker = "✓" if query == entry['successful_query'] else "✗"
+            audit_log_text.append(f"  {marker} Query {i}: {query}")
+        audit_log_text.append("")
+        
+        if entry['successful_query']:
+            audit_log_text.append(f"Successful Query: {entry['successful_query']}")
+            if entry['geocoded_result']:
+                audit_log_text.append(f"Geocoded Result:")
+                audit_log_text.append(f"  Name: {entry['geocoded_result']['name']}")
+                audit_log_text.append(f"  Coordinates: ({entry['geocoded_result']['lat']}, {entry['geocoded_result']['lon']})")
+                audit_log_text.append(f"  Inside Target Area: {entry['inside_target']}")
+        else:
+            audit_log_text.append("Successful Query: NONE (all queries failed)")
+        audit_log_text.append("")
+        
+        audit_log_text.append("Reasoning:")
+        for reason in entry['reasoning']:
+            audit_log_text.append(f"  • {reason}")
+        audit_log_text.append("")
+        
+        status_emoji = {"keep": "✅", "exclude": "❌", "unmatched": "⚠️"}.get(entry['status'], "❓")
+        audit_log_text.append(f"Final Status: {status_emoji} {entry['status'].upper()}")
+        audit_log_text.append("")
+        audit_log_text.append("=" * 80)
+        audit_log_text.append("")
+    
+    audit_log_string = "\n".join(audit_log_text)
+    
+    # Display audit log in expandable section
+    with st.expander("📋 View Complete Audit Log", expanded=False):
+        st.text_area(
+            "Copy this audit log for debugging:",
+            value=audit_log_string,
+            height=600,
+            key="audit_log_display"
+        )
+    
+    # Also show a summary table
+    audit_summary = []
+    for entry in audit_log:
+        audit_summary.append({
+            "Original Search Terms": entry['original_search_terms'],
+            "Extracted Location": entry['extracted_location'],
+            "Queries Tried": len(entry['queries_tried']),
+            "Successful Query": entry['successful_query'] or "None",
+            "Geocoded Name": entry['geocoded_result']['name'] if entry['geocoded_result'] else "N/A",
+            "Inside Target": str(entry['inside_target']) if entry['inside_target'] is not None else "N/A",
+            "Status": entry['status'].upper()
+        })
+    
+    audit_summary_df = pd.DataFrame(audit_summary)
+    with st.expander("📊 Audit Summary Table"):
+        st.dataframe(audit_summary_df)
 else:
     st.info("Upload a CSV and set a target area to begin.")
 
