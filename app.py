@@ -343,12 +343,11 @@ def _locations_match(result_components: Dict[str, str], target_components: Dict[
 
 def _build_contextualized_query(location: str, target_components: Dict[str, str], target_display_name: str) -> List[str]:
     """
-    Build geocoding queries. ALWAYS appends target area context to the location.
-    This ensures we search for the location within the target area.
+    Build a single geocoding query: extracted location + target area.
     
-    Strategy: Always use target context first to disambiguate and find locations
-    within the target area. If a location doesn't exist in the target area,
-    geocoding will either fail or return something outside the target.
+    Strategy: Use only one query with target context to find the location
+    within the target area. If it doesn't exist there, geocoding will fail
+    or return something outside the target area.
     
     Examples:
     - "Brighton, Melbourne, Australia" -> finds Brighton suburb in Melbourne
@@ -357,10 +356,8 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     if not location:
         return []
     
-    location_lower = location.lower()
-    queries = []
-    
     # Check if location already contains sufficient context
+    location_lower = location.lower()
     city = target_components.get('city', '').lower()
     state = target_components.get('state', '').lower()
     country = target_components.get('country', '').lower()
@@ -371,48 +368,25 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     
     # If location already has city AND (state OR country), it's already contextualized
     if has_city and (has_state or has_country):
-        queries.append(location)
-        return queries
+        return [location]
     
+    # Single query: Location + Target area
+    if target_display_name:
+        return [f"{location}, {target_display_name}"]
+    
+    # Fallback if no target_display_name: use city + state + country
     city_val = target_components.get('city', '')
     state_val = target_components.get('state', '')
     country_val = target_components.get('country', '')
     
-    # Strategy: ALWAYS append target area context first
-    # This disambiguates locations and ensures we find them within the target area
-    
-    # Query 1: Location + Full target display name (most specific)
-    if target_display_name:
-        queries.append(f"{location}, {target_display_name}")
-    
-    # Query 2: Location + City + State + Country (if we have all components)
     if city_val and state_val and country_val:
-        queries.append(f"{location}, {city_val}, {state_val}, {country_val}")
-    
-    # Query 3: Location + City + Country
-    if city_val and country_val:
-        queries.append(f"{location}, {city_val}, {country_val}")
-    
-    # Query 4: Location + State + Country (if no city but have state)
-    if state_val and country_val and not city_val:
-        queries.append(f"{location}, {state_val}, {country_val}")
-    
-    # Query 5: Location + Country (broader search)
-    if country_val:
-        queries.append(f"{location}, {country_val}")
-    
-    # Query 6: Just location (fallback if all contextualized queries fail)
-    queries.append(location)
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_queries = []
-    for q in queries:
-        if q not in seen:
-            seen.add(q)
-            unique_queries.append(q)
-    
-    return unique_queries
+        return [f"{location}, {city_val}, {state_val}, {country_val}"]
+    elif city_val and country_val:
+        return [f"{location}, {city_val}, {country_val}"]
+    elif country_val:
+        return [f"{location}, {country_val}"]
+    else:
+        return [location]
 
 
 def _add_target_context(location: str, target_area: str) -> str:
@@ -1443,41 +1417,35 @@ if run_button and uploaded and target_area.strip():
         progress_bar.progress(overall_progress)
         status_text.text(f"Geocoding location {idx + 1}/{total_locations}: {extracted_location} | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
-        # Try queries in order until we get a valid result
-        # All queries now have target context first, then fallback to broader searches
+        # Try single query: extracted location + target area
         result = None
-        error_messages = []
+        error_message = None
         successful_query = None
         result_admin_level = None
         
-        for query_idx, query in enumerate(queries):
-            candidate_result, error = geocode(query, polygon=False)
-            
-            if throttle:
-                time.sleep(throttle)
-            
-            if candidate_result is not None:
-                # Get administrative level for logging
-                admin_level = _get_result_administrative_level(candidate_result)
-                
-                # Use the first successful result
-                # Since queries are ordered with target context first, this should find
-                # the location within the target area if it exists there
-                result = candidate_result
-                successful_query = query
-                result_admin_level = admin_level
-                audit_entry["successful_query"] = query
-                audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location)")
-                break
-            else:
-                error_msg = error or "No results returned"
-                error_messages.append(f"Query {query_idx + 1} ('{query}'): {error_msg}")
-                audit_entry["reasoning"].append(f"Query {query_idx + 1} failed: '{query}' → {error_msg}")
+        # Should only have one query now
+        query = queries[0] if queries else extracted_location
+        
+        result, error = geocode(query, polygon=False)
+        
+        if throttle:
+            time.sleep(throttle)
+        
+        if result is not None:
+            # Get administrative level for logging
+            admin_level = _get_result_administrative_level(result)
+            successful_query = query
+            result_admin_level = admin_level
+            audit_entry["successful_query"] = query
+            audit_entry["reasoning"].append(f"Query succeeded: '{query}' (found {admin_level} level location)")
+        else:
+            error_message = error or "No results returned"
+            audit_entry["reasoning"].append(f"Query failed: '{query}' → {error_message}")
         
         if result is None:
             unmatched_count += 1
             audit_entry["status"] = "unmatched"
-            audit_entry["reasoning"].append("All queries failed - location could not be geocoded")
+            audit_entry["reasoning"].append("Query failed - location could not be geocoded")
             audit_log.append(audit_entry)
             all_records.append(
                 {
