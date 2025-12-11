@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
@@ -8,13 +9,30 @@ import requests
 import shapely.geometry as geom
 import streamlit as st
 
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    OpenAI = None
+
 
 # You can override the geocoder endpoint if the default is blocked on your host.
 GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/search")
 _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
+_openai_key = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = _openai_key.strip() if _openai_key else None
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.06"
+APP_VERSION = "v1.08"
+
+# Initialize OpenAI client if available and API key is set
+openai_client = None
+if OPENAI_AVAILABLE and OPENAI_API_KEY:
+    try:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception:
+        openai_client = None
 
 
 st.set_page_config(page_title="Location Search Term Filter", layout="wide")
@@ -26,6 +44,79 @@ st.write(
 
 
 # -------- Helpers -------- #
+@lru_cache(maxsize=1000)
+def _extract_location_with_llm(search_term: str) -> Optional[str]:
+    """
+    Use OpenAI API to extract location name from search term.
+    No hardcoding - LLM understands context and extracts locations intelligently.
+    """
+    if not search_term or not isinstance(search_term, str) or not search_term.strip():
+        return None
+    
+    if not openai_client:
+        return None
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",  # Fast and cheap, good enough for this task
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a location extraction expert. Extract ONLY the location name from search terms. Return just the location name, nothing else. If no location is found, return exactly 'NONE'. Do not include service terms, business names, or qualifiers. Examples: 'locksmith adelaide' -> 'adelaide', 'mawson lakes locksmith' -> 'mawson lakes', 'locksmith near me' -> 'NONE'."
+                },
+                {
+                    "role": "user",
+                    "content": f"Extract the location name from this search term: '{search_term}'\n\nReturn ONLY the location name (e.g., 'adelaide', 'mawson lakes', 'st agnes'). If no location exists, return 'NONE'."
+                }
+            ],
+            temperature=0.1,  # Low temperature for consistent results
+            max_tokens=50,
+        )
+        
+        extracted = response.choices[0].message.content.strip()
+        
+        # Clean up the response
+        extracted = extracted.strip('"').strip("'").strip()
+        
+        # Handle "NONE" or empty responses
+        if not extracted or extracted.upper() == "NONE" or len(extracted) < 2:
+            return None
+        
+        # Capitalize properly (first letter of each word)
+        location = ' '.join(word.capitalize() for word in extracted.split())
+        
+        return location
+        
+    except Exception as e:
+        # If OpenAI fails, return None (will be handled as unmatched)
+        return None
+
+
+def _extract_location_from_search_term(search_term: str) -> Optional[str]:
+    """
+    Extract location name from a search term using LLM.
+    Falls back to simple extraction if OpenAI is not available.
+    """
+    # Try LLM first if available
+    if openai_client:
+        location = _extract_location_with_llm(search_term)
+        if location:
+            return location
+    
+    # Fallback: simple extraction (remove common words, find capitalized words)
+    if not search_term or not isinstance(search_term, str):
+        return None
+    
+    # Simple fallback - try to find capitalized words (likely locations)
+    words = search_term.split()
+    location_words = [w for w in words if w and w[0].isupper() and len(w) > 2 and w.lower() not in ["near", "me", "local", "now", "today"]]
+    
+    if location_words:
+        return ' '.join(location_words)
+    
+    return None
+
+
 def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
     """Read CSV file, handling Google Ads format with metadata rows."""
     # Try reading with skiprows to handle Google Ads format
@@ -93,6 +184,41 @@ def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _aggregate_search_terms(df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate duplicate search terms by summing their impressions."""
     aggregated = df.groupby("search_term", as_index=False)["impressions"].sum()
+    aggregated = aggregated.sort_values("impressions", ascending=False)
+    return aggregated.reset_index(drop=True)
+
+
+def _extract_locations_from_search_terms(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extract location names from search terms and create a new dataframe.
+    Only includes rows where a location was successfully extracted.
+    """
+    results = []
+    
+    for _, row in df.iterrows():
+        search_term = row["search_term"]
+        impressions = row["impressions"]
+        
+        extracted_location = _extract_location_from_search_term(search_term)
+        
+        if extracted_location:
+            results.append({
+                "original_search_term": search_term,
+                "extracted_location": extracted_location,
+                "impressions": impressions,
+            })
+    
+    if not results:
+        return pd.DataFrame(columns=["original_search_term", "extracted_location", "impressions"])
+    
+    result_df = pd.DataFrame(results)
+    
+    # Aggregate by extracted location (same location might come from different search terms)
+    aggregated = result_df.groupby("extracted_location", as_index=False).agg({
+        "impressions": "sum",
+        "original_search_term": lambda x: ", ".join(x.unique()[:3]) + ("..." if len(x.unique()) > 3 else "")
+    })
+    
     aggregated = aggregated.sort_values("impressions", ascending=False)
     return aggregated.reset_index(drop=True)
 
@@ -276,6 +402,7 @@ st.sidebar.header("How to use")
 st.sidebar.markdown(
     "- Upload CSV (Google Ads format supported - auto-detects 'Search term' and 'Impr.' columns).\n"
     "- Duplicate search terms are automatically aggregated (impressions summed).\n"
+    "- **🤖 Location extraction**: Uses AI (OpenAI) to intelligently extract location names from any search term - no hardcoding needed!\n"
     "- Enter target area (e.g., `Melbourne, Australia`).\n"
     "- Progress indicators show what's happening at each step.\n"
     "- Output shows keep vs exclude by location with aggregated impressions."
@@ -286,13 +413,17 @@ target_area = st.text_input("Target area (city/region/country)", value="Melbourn
 throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
 
 st.caption(f"Geocoder URL: {GEOCODER_URL}")
-st.caption(f"API key present: {'yes' if GEOCODER_API_KEY else 'no'}")
+st.caption(f"Geocoder API key: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
+if openai_client:
+    st.caption(f"🤖 OpenAI API: ✅ Enabled (using LLM for intelligent location extraction)")
+else:
+    st.caption(f"🤖 OpenAI API: ❌ Not configured (using fallback extraction method)")
 if GEOCODER_API_KEY:
     # Show key length for debugging (without exposing the actual key)
-    st.caption(f"API key length: {len(GEOCODER_API_KEY)} characters")
+    st.caption(f"Geocoder key length: {len(GEOCODER_API_KEY)} characters")
     # Show first/last 4 chars for verification (without exposing full key)
     if len(GEOCODER_API_KEY) >= 8:
-        st.caption(f"API key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
+        st.caption(f"Geocoder key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
 st.caption(f"App version: {APP_VERSION}")
 
 # Debug section - test API key
@@ -336,7 +467,7 @@ if uploaded and target_area.strip():
 
     # Step 2: Aggregate search terms
     with status_container:
-        st.info(f"📊 **Step 2/4:** Aggregating duplicate search terms...")
+        st.info(f"📊 **Step 2/5:** Aggregating duplicate search terms...")
         st.caption(f"Processing {len(df_cleaned)} rows...")
     
     df_aggregated = _aggregate_search_terms(df_cleaned)
@@ -349,9 +480,34 @@ if uploaded and target_area.strip():
             st.success(f"✅ No duplicates found: {len(df_aggregated)} unique search terms")
         st.caption(f"Total impressions: {df_aggregated['impressions'].sum():,.0f}")
 
-    # Step 3: Geocode target area
+    # Step 3: Extract locations from search terms
     with status_container:
-        st.info(f"🌍 **Step 3/4:** Geocoding target area '{target_area}'...")
+        if openai_client:
+            st.info(f"🤖 **Step 3/5:** Using AI to extract location names from search terms...")
+            st.caption(f"AI is analyzing each search term to intelligently identify location names (no hardcoding!)...")
+        else:
+            st.info(f"🔍 **Step 3/5:** Extracting location names from search terms...")
+            st.caption(f"Using fallback method (OpenAI not configured)...")
+    
+    df_locations = _extract_locations_from_search_terms(df_aggregated)
+    locations_found = len(df_locations)
+    terms_without_locations = len(df_aggregated) - len(df_locations)
+    
+    with status_container:
+        if locations_found > 0:
+            st.success(f"✅ Extracted {locations_found} unique locations from {len(df_aggregated)} search terms")
+            if terms_without_locations > 0:
+                st.caption(f"⚠️ {terms_without_locations} search terms had no extractable location (e.g., 'locksmith near me', 'key replacement')")
+            # Show some examples
+            example_locations = df_locations.head(5)["extracted_location"].tolist()
+            st.caption(f"Sample extracted locations: {', '.join(example_locations)}")
+        else:
+            st.warning(f"⚠️ No locations could be extracted from search terms. Check if search terms contain location names.")
+            st.stop()
+
+    # Step 4: Geocode target area
+    with status_container:
+        st.info(f"🌍 **Step 4/5:** Geocoding target area '{target_area}'...")
     
     target_result, target_geom, target_warnings = geocode_target_area(target_area)
     if target_warnings:
@@ -364,9 +520,9 @@ if uploaded and target_area.strip():
     with status_container:
         st.success(f"✅ Target area matched: {target_result.get('display_name')}")
 
-    # Step 4: Geocode search terms with progress
+    # Step 5: Geocode extracted locations with progress
     with status_container:
-        st.info(f"🔍 **Step 4/4:** Geocoding {len(df_aggregated)} search terms...")
+        st.info(f"🗺️ **Step 5/5:** Geocoding {locations_found} extracted locations...")
     
     # Reset cache between runs if needed
     geocode.cache_clear()
@@ -376,20 +532,21 @@ if uploaded and target_area.strip():
     status_text = st.empty()
     
     all_records = []
-    total_terms = len(df_aggregated)
+    total_locations = len(df_locations)
     geocoded_count = 0
     unmatched_count = 0
     
-    for idx, row in df_aggregated.iterrows():
-        term = row["search_term"]
+    for idx, row in df_locations.iterrows():
+        extracted_location = row["extracted_location"]
+        original_terms = row["original_search_term"]
         impressions = row["impressions"]
         
         # Update progress
-        progress = (idx + 1) / total_terms
+        progress = (idx + 1) / total_locations
         progress_bar.progress(progress)
-        status_text.text(f"Processing {idx + 1}/{total_terms}: '{term[:50]}{'...' if len(term) > 50 else ''}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
+        status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
-        result, _ = geocode(term, polygon=False)
+        result, _ = geocode(extracted_location, polygon=False)
         
         if throttle:
             time.sleep(throttle)
@@ -398,9 +555,10 @@ if uploaded and target_area.strip():
             unmatched_count += 1
             all_records.append(
                 {
-                    "search_term": term,
+                    "extracted_location": extracted_location,
+                    "original_search_terms": original_terms,
                     "impressions": impressions,
-                    "location_name": None,
+                    "geocoded_name": None,
                     "lat": None,
                     "lon": None,
                     "status": "unmatched",
@@ -413,9 +571,10 @@ if uploaded and target_area.strip():
         status = "keep" if inside else "exclude" if inside is False else "unmatched"
         all_records.append(
             {
-                "search_term": term,
+                "extracted_location": extracted_location,
+                "original_search_terms": original_terms,
                 "impressions": impressions,
-                "location_name": result.get("display_name", ""),
+                "geocoded_name": result.get("display_name", ""),
                 "lat": result.get("lat"),
                 "lon": result.get("lon"),
                 "status": status,
@@ -429,40 +588,51 @@ if uploaded and target_area.strip():
     status_text.empty()
     
     with status_container:
-        st.success(f"✅ Geocoding complete! Processed {total_terms} terms ({geocoded_count} matched, {unmatched_count} unmatched)")
+        st.success(f"✅ Geocoding complete! Processed {total_locations} locations ({geocoded_count} matched, {unmatched_count} unmatched)")
 
     keep_df = results_df[results_df["status"] == "keep"]
     exclude_df = results_df[results_df["status"] == "exclude"]
     unmatched_df = results_df[results_df["status"] == "unmatched"]
 
     agg_keep = (
-        keep_df.groupby("location_name", dropna=True)["impressions"].sum().reset_index()
+        keep_df.groupby("geocoded_name", dropna=True)["impressions"].sum().reset_index()
         if not keep_df.empty
-        else pd.DataFrame(columns=["location_name", "impressions"])
+        else pd.DataFrame(columns=["geocoded_name", "impressions"])
     )
     agg_exclude = (
-        exclude_df.groupby("location_name", dropna=True)["impressions"].sum().reset_index()
+        exclude_df.groupby("geocoded_name", dropna=True)["impressions"].sum().reset_index()
         if not exclude_df.empty
-        else pd.DataFrame(columns=["location_name", "impressions"])
+        else pd.DataFrame(columns=["geocoded_name", "impressions"])
     )
 
-    st.subheader("Suggested keeps (inside target area)")
-    st.dataframe(agg_keep.sort_values("impressions", ascending=False))
-    download_link("Download keeps (agg)", agg_keep, "keeps.csv", "keeps-agg")
+    st.subheader("✅ Suggested keeps (locations inside target area)")
+    if not agg_keep.empty:
+        st.dataframe(agg_keep.sort_values("impressions", ascending=False))
+        download_link("Download keeps (aggregated)", agg_keep, "keeps.csv", "keeps-agg")
+        st.caption(f"Total impressions to keep: {agg_keep['impressions'].sum():,.0f}")
+    else:
+        st.info("No locations found inside the target area.")
 
-    st.subheader("Suggested excludes (outside target area)")
-    st.dataframe(agg_exclude.sort_values("impressions", ascending=False))
-    download_link("Download excludes (agg)", agg_exclude, "excludes.csv", "excludes-agg")
+    st.subheader("❌ Suggested excludes (locations outside target area)")
+    if not agg_exclude.empty:
+        st.dataframe(agg_exclude.sort_values("impressions", ascending=False))
+        download_link("Download excludes (aggregated)", agg_exclude, "excludes.csv", "excludes-agg")
+        st.caption(f"Total impressions to exclude: {agg_exclude['impressions'].sum():,.0f}")
+    else:
+        st.info("No locations found outside the target area.")
 
-    st.subheader("Row-level results")
-    st.dataframe(results_df)
+    st.subheader("📋 Detailed results (all locations)")
+    st.dataframe(results_df.sort_values("impressions", ascending=False))
     download_link("Download full results", results_df, "results.csv", "full-results")
 
     if not unmatched_df.empty:
-        st.info(
-            f"{len(unmatched_df)} terms could not be matched. "
-            "Try using more explicit place names or lowering throttle if rate-limited."
+        st.warning(
+            f"⚠️ {len(unmatched_df)} extracted locations could not be geocoded. "
+            "These may be invalid location names or need manual review. "
+            "Try adjusting the throttle if rate-limited."
         )
+        with st.expander("View unmatched locations"):
+            st.dataframe(unmatched_df[["extracted_location", "original_search_terms", "impressions"]])
 else:
     st.info("Upload a CSV and set a target area to begin.")
 
