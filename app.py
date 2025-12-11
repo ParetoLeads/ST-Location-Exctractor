@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.08"
+APP_VERSION = "v1.09"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -160,6 +160,33 @@ def _extract_location_from_search_term(search_term: str) -> Optional[str]:
         return ' '.join(location_words)
     
     return None
+
+
+def _add_target_context(location: str, target_area: str) -> str:
+    """
+    Add target area context to location name for better geocoding accuracy.
+    
+    Examples:
+    - "Newton" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia"
+    - "Newton, Australia" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia" (avoid duplicate)
+    """
+    if not location or not target_area:
+        return location
+    
+    location_lower = location.lower()
+    target_lower = target_area.lower()
+    
+    # Check if location already contains target area (avoid duplication)
+    # Extract key words from target (city, country) to check
+    target_words = [w.strip() for w in target_lower.split(',')]
+    
+    # If location already contains any significant part of target, return as-is
+    for word in target_words:
+        if len(word) > 3 and word in location_lower:
+            return location
+    
+    # Append target area with comma separator
+    return f"{location}, {target_area}"
 
 
 def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
@@ -701,6 +728,9 @@ if uploaded and target_area.strip():
 
     with status_container:
         st.success(f"✅ Target area matched: {target_result.get('display_name')}")
+    
+    # Extract target area display name for context
+    target_display_name = target_result.get('display_name', target_area)
 
     # Step 5: Geocode extracted locations with progress
     with status_container:
@@ -723,12 +753,15 @@ if uploaded and target_area.strip():
         original_terms = row["original_search_term"]
         impressions = row["impressions"]
         
+        # Add target area context to location for better geocoding accuracy
+        contextualized_location = _add_target_context(extracted_location, target_display_name)
+        
         # Update progress
         progress = (idx + 1) / total_locations
         progress_bar.progress(progress)
-        status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
+        status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' → '{contextualized_location}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
-        result, _ = geocode(extracted_location, polygon=False)
+        result, _ = geocode(contextualized_location, polygon=False)
         
         if throttle:
             time.sleep(throttle)
