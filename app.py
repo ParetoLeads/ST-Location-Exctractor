@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from functools import lru_cache
@@ -7,7 +6,6 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 import shapely.geometry as geom
-import shapely.wkt
 import streamlit as st
 
 
@@ -15,7 +13,7 @@ import streamlit as st
 GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/search")
 GEOCODER_API_KEY = os.getenv("GEOCODER_API_KEY")  # e.g., for https://geocode.maps.co
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.01"
+APP_VERSION = "v1.02"
 
 
 st.set_page_config(page_title="Location Search Term Filter", layout="wide")
@@ -56,22 +54,29 @@ def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @lru_cache(maxsize=512)
-def geocode(query: str, polygon: bool = False) -> Optional[Dict]:
-    params = {
-        "q": query,
-        "format": "jsonv2",
-        "limit": 1,
-        "addressdetails": 1,
-    }
-    if polygon:
-        params["polygon_geojson"] = 1
-    if GEOCODER_API_KEY:
-        # Some providers expect api_key, others key. Send both if present.
-        params["api_key"] = GEOCODER_API_KEY
-        params["key"] = GEOCODER_API_KEY
-
+def geocode(query: str, polygon: bool = False) -> Tuple[Optional[Dict], Optional[str]]:
+    # Detect which geocoder API we're using
+    is_maps_co = "geocode.maps.co" in GEOCODER_URL
+    
+    params = {"q": query}
+    
+    if is_maps_co:
+        # geocode.maps.co format - simpler, just needs q and api_key
+        if GEOCODER_API_KEY:
+            params["api_key"] = GEOCODER_API_KEY
+    else:
+        # Nominatim format
+        params.update({
+            "format": "jsonv2",
+            "limit": 1,
+            "addressdetails": 1,
+        })
+        if polygon:
+            params["polygon_geojson"] = 1
+    
     headers = {"User-Agent": USER_AGENT}
-
+    last_error = None
+    
     for attempt in range(3):
         try:
             resp = requests.get(
@@ -81,16 +86,37 @@ def geocode(query: str, polygon: bool = False) -> Optional[Dict]:
                 timeout=10,
             )
             if resp.status_code != 200:
+                last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
                 time.sleep(0.5)
                 continue
             data = resp.json()
             if not data:
-                return None
-            return data[0]
-        except requests.RequestException:
+                last_error = "Empty response"
+                return None, last_error
+            
+            result = data[0]
+            
+            # Normalize response format - maps.co returns lat/lon as strings
+            if is_maps_co:
+                if "lat" in result and isinstance(result["lat"], str):
+                    result["lat"] = float(result["lat"])
+                if "lon" in result and isinstance(result["lon"], str):
+                    result["lon"] = float(result["lon"])
+                # maps.co uses "display_name" or "formatted" for the name
+                if "display_name" not in result and "formatted" in result:
+                    result["display_name"] = result["formatted"]
+            
+            return result, None
+        except requests.RequestException as exc:
+            last_error = str(exc)
             time.sleep(0.5)
             continue
-    return None
+        except (ValueError, KeyError, IndexError) as exc:
+            last_error = f"Parse error: {exc}"
+            time.sleep(0.5)
+            continue
+    
+    return None, last_error
 
 
 def bbox_to_polygon(bbox: List[str]) -> Optional[geom.Polygon]:
@@ -139,7 +165,7 @@ def extract_locations(df: pd.DataFrame, target_geom: geom.base.BaseGeometry) -> 
         term = row["search_term"]
         impressions = row["impressions"]
 
-        result = geocode(term, polygon=False)
+        result, _ = geocode(term, polygon=False)
         if result is None:
             records.append(
                 {
@@ -170,9 +196,12 @@ def extract_locations(df: pd.DataFrame, target_geom: geom.base.BaseGeometry) -> 
 
 
 def geocode_target_area(area_text: str) -> Tuple[Optional[Dict], Optional[geom.base.BaseGeometry], List[str]]:
-    result = geocode(area_text, polygon=True)
+    result, err = geocode(area_text, polygon=True)
     if not result:
-        return None, None, [f"No match found for '{area_text}'. Try a more specific area."]
+        error_msg = f"No match found for '{area_text}'."
+        if err:
+            error_msg += f" {err}"
+        return None, None, [error_msg]
 
     shape = location_shape(result)
     warnings = []
@@ -232,7 +261,7 @@ if uploaded and target_area.strip():
         for idx, row in df_input.iterrows():
             term = row["search_term"]
             impressions = row["impressions"]
-            result = geocode(term, polygon=False)
+            result, _ = geocode(term, polygon=False)
             if throttle:
                 time.sleep(throttle)
             if result is None:
