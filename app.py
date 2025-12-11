@@ -595,90 +595,37 @@ That's it!
 # Add custom CSS to make upload drop area bigger and responsive
 st.markdown("""
 <style>
-    /* Comprehensive targeting of file uploader - try all possible selectors */
-    [data-testid="stFileUploader"],
-    div[data-testid="stFileUploader"],
-    section[data-testid="stFileUploader"] {
+    /* Target the actual drop zone - it's a SECTION element! */
+    section[data-testid="stFileUploaderDropzone"] {
         height: 450px !important;
         min-height: 450px !important;
-        max-height: 450px !important;
-    }
-    
-    /* Target all nested divs within file uploader */
-    [data-testid="stFileUploader"] div,
-    [data-testid="stFileUploader"] > div,
-    [data-testid="stFileUploader"] > div > div,
-    [data-testid="stFileUploader"] > div > div > div {
-        height: 450px !important;
-        min-height: 450px !important;
-        max-height: 450px !important;
-    }
-    
-    /* Specifically target the drop zone border area */
-    [data-testid="stFileUploader"] > div > div {
-        height: 450px !important;
-        min-height: 450px !important;
-        max-height: 450px !important;
-        padding: 40px !important;
-        border: 2px dashed #ccc !important;
-        border-radius: 8px !important;
+        padding: 40px 20px !important;
         transition: all 0.3s ease !important;
         box-sizing: border-box !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
     }
     
     /* Hover state */
-    [data-testid="stFileUploader"] > div > div:hover {
-        border-color: #1f77b4 !important;
+    section[data-testid="stFileUploaderDropzone"]:hover {
         background-color: rgba(31, 119, 180, 0.05) !important;
         transform: scale(1.01) !important;
     }
     
     /* Drag over state - when file is being dragged */
-    [data-testid="stFileUploader"] > div > div.drag-over,
-    [data-testid="stFileUploader"] > div > div.dragover {
-        border-color: #1f77b4 !important;
+    section[data-testid="stFileUploaderDropzone"].drag-over {
         background-color: rgba(31, 119, 180, 0.15) !important;
-        border-width: 3px !important;
         transform: scale(1.02) !important;
         box-shadow: 0 0 20px rgba(31, 119, 180, 0.3) !important;
+        border-color: #1f77b4 !important;
     }
     
-    /* Target the inner content wrapper */
-    [data-testid="stFileUploader"] > div > div > div {
+    /* Make sure the inner content area is properly sized */
+    section[data-testid="stFileUploaderDropzone"] > div {
         height: 100% !important;
-        min-height: 100% !important;
-        width: 100% !important;
+        min-height: 370px !important;
         display: flex !important;
         flex-direction: column !important;
         align-items: center !important;
         justify-content: center !important;
-        gap: 10px !important;
-    }
-    
-    /* Make the file input cover the entire area */
-    [data-testid="stFileUploader"] input[type="file"] {
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        height: 450px !important;
-        min-height: 450px !important;
-        cursor: pointer !important;
-        opacity: 0 !important;
-        z-index: 10 !important;
-    }
-    
-    /* Style text elements */
-    [data-testid="stFileUploader"] span,
-    [data-testid="stFileUploader"] p,
-    [data-testid="stFileUploader"] div[class*="text"] {
-        font-size: 16px !important;
-        pointer-events: none !important;
-        z-index: 1 !important;
     }
     
     .stTextInput > div > div > input {
@@ -687,61 +634,34 @@ st.markdown("""
     }
 </style>
 <script>
-    // Enhanced drag-over handler for Streamlit's file uploader
+    // Enhanced drag-over handler targeting the correct element
     function setupDragOver() {
-        const fileUploader = document.querySelector('[data-testid="stFileUploader"]');
-        if (fileUploader) {
-            // Try to find the drop zone - could be at different levels
-            let dropZone = fileUploader.querySelector('div > div');
-            if (!dropZone) {
-                dropZone = fileUploader.querySelector('div');
-            }
+        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
+        
+        if (dropZone && !dropZone.hasAttribute('data-drag-setup')) {
+            dropZone.setAttribute('data-drag-setup', 'true');
             
-            if (dropZone && !dropZone.hasAttribute('data-drag-setup')) {
-                dropZone.setAttribute('data-drag-setup', 'true');
-                
-                // Prevent default drag behaviors
-                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                    dropZone.addEventListener(eventName, function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                    }, false);
-                });
-                
-                // Add drag-over class on dragenter/dragover
-                ['dragenter', 'dragover'].forEach(eventName => {
-                    dropZone.addEventListener(eventName, function(e) {
-                        this.classList.add('drag-over');
-                    }, false);
-                });
-                
-                // Remove drag-over class on dragleave/drop
-                ['dragleave', 'drop'].forEach(eventName => {
-                    dropZone.addEventListener(eventName, function(e) {
-                        this.classList.remove('drag-over');
-                    }, false);
-                });
-                
-                // Also handle on the file input itself
-                const fileInput = fileUploader.querySelector('input[type="file"]');
-                if (fileInput) {
-                    ['dragenter', 'dragover'].forEach(eventName => {
-                        fileInput.addEventListener(eventName, function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (dropZone) dropZone.classList.add('drag-over');
-                        }, false);
-                    });
-                    
-                    ['dragleave', 'drop'].forEach(eventName => {
-                        fileInput.addEventListener(eventName, function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (dropZone) dropZone.classList.remove('drag-over');
-                        }, false);
-                    });
-                }
-            }
+            // Prevent default drag behaviors
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }, false);
+            });
+            
+            // Add drag-over class on dragenter/dragover
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function(e) {
+                    this.classList.add('drag-over');
+                }, false);
+            });
+            
+            // Remove drag-over class on dragleave/drop
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function(e) {
+                    this.classList.remove('drag-over');
+                }, false);
+            });
         }
     }
     
@@ -778,43 +698,25 @@ uploaded = st.file_uploader(
 # Inject CSS and JavaScript right after file uploader to ensure it applies
 st.markdown("""
 <style>
-    /* Force file uploader to be 450px tall - use very specific selectors */
-    div[data-testid="stFileUploader"] {
+    /* Force the drop zone section to be 450px tall */
+    section[data-testid="stFileUploaderDropzone"] {
         height: 450px !important;
         min-height: 450px !important;
     }
-    div[data-testid="stFileUploader"] > div {
-        height: 450px !important;
-        min-height: 450px !important;
-    }
-    div[data-testid="stFileUploader"] > div > div {
-        height: 450px !important;
-        min-height: 450px !important;
-        padding: 40px 20px !important;
-    }
-    div[data-testid="stFileUploader"] > div > div.drag-over {
+    section[data-testid="stFileUploaderDropzone"].drag-over {
         border-color: #1f77b4 !important;
         background-color: rgba(31, 119, 180, 0.15) !important;
-        border-width: 3px !important;
         box-shadow: 0 0 20px rgba(31, 119, 180, 0.3) !important;
     }
 </style>
 <script>
-    // Force resize using JavaScript as backup
+    // Force resize using JavaScript as backup - target the correct element
     function forceResizeUploader() {
-        const uploader = document.querySelector('[data-testid="stFileUploader"]');
-        if (uploader) {
+        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
+        if (dropZone) {
             // Set height directly via JavaScript
-            uploader.style.height = '450px';
-            uploader.style.minHeight = '450px';
-            
-            const divs = uploader.querySelectorAll('div');
-            divs.forEach(div => {
-                if (div.offsetHeight < 400) {
-                    div.style.height = '450px';
-                    div.style.minHeight = '450px';
-                }
-            });
+            dropZone.style.height = '450px';
+            dropZone.style.minHeight = '450px';
         }
     }
     
