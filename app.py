@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.16"
+APP_VERSION = "v1.17"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -85,10 +85,45 @@ else:
 # Main headline (no version) and styling
 st.markdown("""
 <style>
+    /* Force light theme - override Streamlit dark mode */
+    .stApp {
+        background-color: #ffffff !important;
+    }
+    [data-testid="stAppViewContainer"] {
+        background-color: #ffffff !important;
+    }
+    [data-testid="stHeader"] {
+        background-color: #ffffff !important;
+    }
+    /* Override Streamlit's default dark text */
+    .stMarkdown, p, h1, h2, h3, h4, h5, h6 {
+        color: #000000 !important;
+    }
+    div[data-testid="stMarkdownContainer"] p {
+        color: #000000 !important;
+    }
+    /* Ensure sidebar is light */
+    [data-testid="stSidebar"] {
+        background-color: #f8f9fa !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: #000000 !important;
+    }
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #000000 !important;
+    }
+    /* Override any dark theme text colors */
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3 {
+        color: #000000 !important;
+    }
+    
     .main-headline {
         font-size: 4rem;
         font-weight: 800;
-        color: #000;
+        color: #000 !important;
         margin-bottom: 1rem;
         text-align: center;
         margin-top: 1rem;
@@ -96,7 +131,7 @@ st.markdown("""
     }
     .subheadline {
         font-size: 1.75rem;
-        color: #555;
+        color: #555 !important;
         text-align: center;
         margin-bottom: 1.5rem;
         font-weight: 500;
@@ -104,7 +139,7 @@ st.markdown("""
     }
     .dev-info {
         font-size: 0.875rem;
-        color: #888;
+        color: #888 !important;
         text-align: center;
         margin-top: 1.5rem;
         margin-bottom: 1.5rem;
@@ -112,12 +147,15 @@ st.markdown("""
         border-bottom: 1px solid #e5e5e5;
     }
     .dev-info a {
-        color: #ff6603;
+        color: #ff6603 !important;
         text-decoration: none;
         font-weight: 500;
     }
     .dev-info a:hover {
         text-decoration: underline;
+    }
+    .dev-info p {
+        color: #888 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -631,18 +669,29 @@ That's it!
 # Comprehensive styling inspired by file transfer sites
 st.markdown("""
 <style>
+    /* Additional light theme overrides */
+    [data-testid="stFileUploader"] label,
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] span {
+        color: #000000 !important;
+    }
+    .stTextInput label,
+    .stTextInput p {
+        color: #000000 !important;
+    }
+    
     /* Upload area styling - large rectangular area */
     [data-testid="stFileUploader"] {
-        border: 2px solid #e0e0e0;
+        border: 2px solid #e0e0e0 !important;
         border-radius: 12px;
-        background-color: #ffffff;
+        background-color: #ffffff !important;
         min-height: 280px !important;
         padding: 60px 40px !important;
         transition: all 0.3s ease;
     }
     [data-testid="stFileUploader"]:hover {
-        border-color: #ff6603;
-        background-color: #fff5f0;
+        border-color: #ff6603 !important;
+        background-color: #fff5f0 !important;
     }
     [data-testid="stFileUploader"] > div {
         min-height: 280px !important;
@@ -650,10 +699,16 @@ st.markdown("""
         flex-direction: column;
         justify-content: center;
         align-items: center;
+        background-color: transparent !important;
     }
     [data-testid="stFileUploader"] .uploadedFile {
         min-height: 280px !important;
         padding: 60px 40px !important;
+        background-color: #ffffff !important;
+    }
+    /* Force upload area text to be dark */
+    [data-testid="stFileUploader"] * {
+        color: #000000 !important;
     }
     
     /* Target area input styling */
@@ -661,12 +716,16 @@ st.markdown("""
         font-size: 18px !important;
         padding: 16px 20px !important;
         border-radius: 8px;
-        border: 2px solid #e0e0e0;
+        border: 2px solid #e0e0e0 !important;
         transition: border-color 0.3s ease;
-        background-color: #ffffff;
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
+    .stTextInput > div > div > input::placeholder {
+        color: #999999 !important;
     }
     .stTextInput > div > div > input:focus {
-        border-color: #ff6603;
+        border-color: #ff6603 !important;
         outline: none;
         box-shadow: 0 0 0 3px rgba(255, 102, 3, 0.1);
     }
@@ -699,13 +758,14 @@ st.markdown("""
         max-width: 1000px;
         margin: 0 auto;
         padding: 0 40px;
+        background-color: #ffffff !important;
     }
     
     /* Input labels - bigger and brighter */
     .input-label {
         font-size: 22px;
         font-weight: 700;
-        color: #000;
+        color: #000 !important;
         margin-bottom: 6px;
         display: block;
     }
@@ -726,6 +786,47 @@ st.markdown("""
     /* Add bigger gap before CTA button */
     .cta-spacing {
         margin-top: 2.5rem;
+    }
+    
+    /* Override any remaining dark theme elements */
+    .stExpander label,
+    .stExpander p {
+        color: #000000 !important;
+    }
+    [data-testid="stExpander"] {
+        background-color: #ffffff !important;
+    }
+    
+    /* Force light theme for Streamlit status elements */
+    .stAlert,
+    [data-testid="stAlert"] {
+        background-color: #ffffff !important;
+    }
+    .stAlert p,
+    .stAlert div {
+        color: #000000 !important;
+    }
+    /* Captions should be dark on light background */
+    .stCaption {
+        color: #666666 !important;
+    }
+    /* Info boxes */
+    [data-baseweb="notification"] {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
+    /* Ensure all text in main content area is dark */
+    .main .block-container {
+        background-color: #ffffff !important;
+    }
+    .main .block-container * {
+        color: #000000 !important;
+    }
+    /* Override Streamlit's default text colors */
+    .element-container p,
+    .element-container span,
+    .element-container div {
+        color: #000000 !important;
     }
 </style>
 """, unsafe_allow_html=True)
