@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.14"
+APP_VERSION = "v1.15"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -82,13 +82,6 @@ else:
     openai_client = None
 
 # Display logo and developer info
-# Logo at the top
-logo_path = "assets/logo.png"
-if os.path.exists(logo_path):
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.image(logo_path, width=250)
-
 # Main headline (no version) and styling
 st.markdown("""
 <style>
@@ -101,20 +94,21 @@ st.markdown("""
         margin-top: 2rem;
     }
     .subheadline {
-        font-size: 1.25rem;
-        color: #666;
+        font-size: 1.5rem;
+        color: #333;
         text-align: center;
-        margin-bottom: 3rem;
-        font-weight: 400;
+        margin-bottom: 1rem;
+        font-weight: 500;
         line-height: 1.6;
     }
     .dev-info {
         font-size: 0.875rem;
         color: #888;
         text-align: center;
-        margin-top: 4rem;
-        padding-top: 2rem;
-        border-top: 1px solid #e0e0e0;
+        margin-top: 1rem;
+        margin-bottom: 3rem;
+        padding-bottom: 2rem;
+        border-bottom: 1px solid #e0e0e0;
     }
     .dev-info a {
         color: #ff6603;
@@ -124,15 +118,18 @@ st.markdown("""
     .dev-info a:hover {
         text-decoration: underline;
     }
-    .logo-container {
-        text-align: center;
-        margin-bottom: 2rem;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="main-headline">Location Search Term Filter</h1>', unsafe_allow_html=True)
 st.markdown('<p class="subheadline">Filter and analyze location-based search terms from Google Ads</p>', unsafe_allow_html=True)
+
+# Developer information below headline
+st.markdown("""
+<div class="dev-info">
+    <p>Developed by Nathan Shapiro • App version: """ + APP_VERSION + """ • <a href="https://paretoleads.com" target="_blank">Visit us: Paretoleads.com</a></p>
+</div>
+""", unsafe_allow_html=True)
 
 
 # -------- Helpers -------- #
@@ -701,18 +698,31 @@ st.markdown("""
         padding: 0 20px;
     }
     
-    /* Input labels */
+    /* Input labels - bigger and brighter */
     .input-label {
-        font-size: 16px;
+        font-size: 20px;
         font-weight: 600;
-        color: #333;
-        margin-bottom: 12px;
+        color: #1a1a1a;
+        margin-bottom: 4px;
         display: block;
+    }
+    
+    /* Reduce gap between label and widget */
+    .stFileUploader {
+        margin-top: 4px !important;
+    }
+    .stTextInput {
+        margin-top: 4px !important;
     }
     
     /* Remove default Streamlit spacing */
     .element-container {
         margin-bottom: 2rem;
+    }
+    
+    /* Add bigger gap before CTA button */
+    .cta-spacing {
+        margin-top: 3rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -729,7 +739,7 @@ uploaded = st.file_uploader(
     label_visibility="collapsed"
 )
 
-# Target Area section
+# Target Area section  
 st.markdown('<label class="input-label">Target Area</label>', unsafe_allow_html=True)
 target_area = st.text_input(
     "Enter target area (e.g., Adelaide, Australia)",
@@ -742,17 +752,11 @@ target_area = st.text_input(
 with st.sidebar.expander("⚙️ Advanced Settings"):
     throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
 
-# Run button (no headline, just the button)
-run_button = st.button("Run Analysis", type="primary", use_container_width=True)
+# Run button with rocket emoji and bigger gap above
+st.markdown('<div class="cta-spacing"></div>', unsafe_allow_html=True)
+run_button = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
-
-# Developer information below everything
-st.markdown("""
-<div class="dev-info">
-    <p>Developed by Nathan Shapiro • App version: """ + APP_VERSION + """ • <a href="https://paretoleads.com" target="_blank">Visit us: Paretoleads.com</a></p>
-</div>
-""", unsafe_allow_html=True)
 
 # Technical details in collapsible section
 with st.expander("🔧 Technical Details & Status"):
