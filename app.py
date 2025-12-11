@@ -1009,13 +1009,131 @@ with st.expander("🔧 Technical Details & Status", expanded=False):
     log_text = "\n".join(log_sections)
     st.markdown(log_text)
     
-    # Copyable text area
-    st.text_area(
-        "📋 Copy this complete log for debugging:",
+    # Copy button and text area
+    st.markdown("**📋 Complete Debug Log:**")
+    
+    # Copyable text area with hidden label
+    log_textarea = st.text_area(
+        "Log content:",
         value=log_text,
         height=500,
-        key="technical_log_output"
+        key="technical_log_output",
+        label_visibility="collapsed"
     )
+    
+    # Copy button using JavaScript
+    st.markdown("""
+    <script>
+        function setupCopyButton() {
+            // Find the textarea by its key
+            const textarea = document.querySelector('textarea[data-testid="technical_log_output"]');
+            if (textarea) {
+                // Check if button already exists
+                let copyBtn = document.getElementById('copy-log-js-btn');
+                if (!copyBtn) {
+                    // Create copy button
+                    copyBtn = document.createElement('button');
+                    copyBtn.id = 'copy-log-js-btn';
+                    copyBtn.innerHTML = '📋 Copy to Clipboard';
+                    copyBtn.style.cssText = 'margin-top: 10px; padding: 10px 20px; background-color: #ff6603; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; width: 100%;';
+                    
+                    copyBtn.onclick = function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        // Get text from textarea
+                        const text = textarea.value;
+                        
+                        // Copy to clipboard
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(text).then(function() {
+                                // Success feedback
+                                copyBtn.innerHTML = '✅ Copied to Clipboard!';
+                                copyBtn.style.backgroundColor = '#28a745';
+                                setTimeout(function() {
+                                    copyBtn.innerHTML = '📋 Copy to Clipboard';
+                                    copyBtn.style.backgroundColor = '#ff6603';
+                                }, 2000);
+                            }).catch(function(err) {
+                                // Fallback for older browsers
+                                fallbackCopyTextToClipboard(text, copyBtn);
+                            });
+                        } else {
+                            // Fallback for browsers without clipboard API
+                            fallbackCopyTextToClipboard(text, copyBtn);
+                        }
+                    };
+                    
+                    // Fallback copy function for older browsers
+                    function fallbackCopyTextToClipboard(text, btn) {
+                        const textArea = document.createElement("textarea");
+                        textArea.value = text;
+                        textArea.style.top = "0";
+                        textArea.style.left = "0";
+                        textArea.style.position = "fixed";
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+                        try {
+                            const successful = document.execCommand('copy');
+                            if (successful) {
+                                btn.innerHTML = '✅ Copied to Clipboard!';
+                                btn.style.backgroundColor = '#28a745';
+                                setTimeout(function() {
+                                    btn.innerHTML = '📋 Copy to Clipboard';
+                                    btn.style.backgroundColor = '#ff6603';
+                                }, 2000);
+                            } else {
+                                btn.innerHTML = '❌ Copy Failed';
+                                btn.style.backgroundColor = '#dc3545';
+                                setTimeout(function() {
+                                    btn.innerHTML = '📋 Copy to Clipboard';
+                                    btn.style.backgroundColor = '#ff6603';
+                                }, 2000);
+                            }
+                        } catch (err) {
+                            btn.innerHTML = '❌ Copy Failed';
+                            btn.style.backgroundColor = '#dc3545';
+                            setTimeout(function() {
+                                btn.innerHTML = '📋 Copy to Clipboard';
+                                btn.style.backgroundColor = '#ff6603';
+                            }, 2000);
+                        }
+                        document.body.removeChild(textArea);
+                    }
+                    
+                    // Insert button after the textarea container
+                    const textareaContainer = textarea.closest('.stTextArea');
+                    if (textareaContainer) {
+                        textareaContainer.appendChild(copyBtn);
+                    } else if (textarea.parentElement) {
+                        textarea.parentElement.appendChild(copyBtn);
+                    }
+                }
+            }
+        }
+        
+        // Run on load
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupCopyButton);
+        } else {
+            setupCopyButton();
+        }
+        
+        // Watch for Streamlit re-renders
+        const observer = new MutationObserver(function(mutations) {
+            setupCopyButton();
+        });
+        
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        
+        // Also check periodically as backup
+        setInterval(setupCopyButton, 1000);
+    </script>
+    """, unsafe_allow_html=True)
 
 
 # Only process if Run button is clicked and inputs are provided
