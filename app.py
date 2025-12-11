@@ -344,8 +344,15 @@ def _locations_match(result_components: Dict[str, str], target_components: Dict[
 def _build_contextualized_query(location: str, target_components: Dict[str, str], target_display_name: str) -> List[str]:
     """
     Build geocoding queries. ALWAYS appends target area context to the location.
-    This ensures locations are searched within the target area first.
-    Example: "Newton" + target "Adelaide, Australia" -> "Newton, Adelaide, Australia"
+    This ensures we search for the location within the target area.
+    
+    Strategy: Always use target context first to disambiguate and find locations
+    within the target area. If a location doesn't exist in the target area,
+    geocoding will either fail or return something outside the target.
+    
+    Examples:
+    - "Brighton, Melbourne, Australia" -> finds Brighton suburb in Melbourne
+    - "Adelaide, Melbourne, Australia" -> won't find good match or finds outside Melbourne
     """
     if not location:
         return []
@@ -372,7 +379,7 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     country_val = target_components.get('country', '')
     
     # Strategy: ALWAYS append target area context first
-    # This ensures we search for the location within the target area
+    # This disambiguates locations and ensures we find them within the target area
     
     # Query 1: Location + Full target display name (most specific)
     if target_display_name:
@@ -1437,12 +1444,11 @@ if run_button and uploaded and target_area.strip():
         status_text.text(f"Geocoding location {idx + 1}/{total_locations}: {extracted_location} | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
         # Try queries in order until we get a valid result
-        # Since queries are ordered with target context first, use the first successful result
+        # All queries now have target context first, then fallback to broader searches
         result = None
         error_messages = []
         successful_query = None
         result_admin_level = None
-        result_components = None
         
         for query_idx, query in enumerate(queries):
             candidate_result, error = geocode(query, polygon=False)
@@ -1451,15 +1457,15 @@ if run_button and uploaded and target_area.strip():
                 time.sleep(throttle)
             
             if candidate_result is not None:
-                # Get administrative level and location components for validation
+                # Get administrative level for logging
                 admin_level = _get_result_administrative_level(candidate_result)
-                components = _extract_result_location_components(candidate_result)
                 
-                # Use the first successful result (queries are ordered with target context first)
+                # Use the first successful result
+                # Since queries are ordered with target context first, this should find
+                # the location within the target area if it exists there
                 result = candidate_result
                 successful_query = query
                 result_admin_level = admin_level
-                result_components = components
                 audit_entry["successful_query"] = query
                 audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location)")
                 break
@@ -1501,47 +1507,20 @@ if run_button and uploaded and target_area.strip():
         audit_entry["inside_target"] = inside
         
         # Determine status based on geometry check
-        # Since we always query with target context first, the result should be in/near the target area
-        # However, for high-level administrative areas (country/state/city), we also validate location components
-        # to catch edge cases where a major city name matches a street/suburb in the target area
-        
-        if result_admin_level in ['country', 'state', 'city']:
-            # For high-level administrative areas, validate location components match target
-            # This catches cases where "Adelaide" (city) might match "Adelaide Street" in target area
-            if not _locations_match(result_components, target_components):
-                # Different city/state - exclude even if geometry says inside
-                status = "exclude"
-                audit_entry["status"] = "exclude"
-                result_loc = result_components.get('city') or result_components.get('state') or 'unknown'
-                target_loc = target_components.get('city') or target_components.get('state') or 'unknown'
-                audit_entry["reasoning"].append(f"{result_admin_level.capitalize()} level location doesn't match target area - excluding (result: {result_loc}, target: {target_loc})")
-            elif inside is True:
-                status = "keep"
-                audit_entry["status"] = "keep"
-                audit_entry["reasoning"].append(f"{result_admin_level.capitalize()} level location matches target area and is INSIDE")
-            elif inside is False:
-                status = "exclude"
-                audit_entry["status"] = "exclude"
-                audit_entry["reasoning"].append(f"{result_admin_level.capitalize()} level location is OUTSIDE target area")
-            else:
-                status = "unmatched"
-                audit_entry["status"] = "unmatched"
-                audit_entry["reasoning"].append(f"Could not determine if {result_admin_level} level location is inside/outside target area")
+        # Since we always query with target context first, if the location exists in the target area,
+        # it should be found and the geometry check will confirm if it's inside or outside
+        if inside is True:
+            status = "keep"
+            audit_entry["status"] = "keep"
+            audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is INSIDE target area '{target_display_name}'")
+        elif inside is False:
+            status = "exclude"
+            audit_entry["status"] = "exclude"
+            audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is OUTSIDE target area '{target_display_name}'")
         else:
-            # For lower-level locations (suburbs, streets), use geometry check
-            # Since we queried with target context, these should be in the target area
-            if inside is True:
-                status = "keep"
-                audit_entry["status"] = "keep"
-                audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is INSIDE target area '{target_display_name}'")
-            elif inside is False:
-                status = "exclude"
-                audit_entry["status"] = "exclude"
-                audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is OUTSIDE target area '{target_display_name}'")
-            else:
-                status = "unmatched"
-                audit_entry["status"] = "unmatched"
-                audit_entry["reasoning"].append(f"Could not determine if '{geocoded_name}' is inside/outside target area (geometry check returned None)")
+            status = "unmatched"
+            audit_entry["status"] = "unmatched"
+            audit_entry["reasoning"].append(f"Could not determine if '{geocoded_name}' is inside/outside target area (geometry check returned None)")
         
         audit_log.append(audit_entry)
         all_records.append(
