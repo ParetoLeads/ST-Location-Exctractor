@@ -370,23 +370,18 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     if has_city and (has_state or has_country):
         return [location]
     
-    # Single query: Location + Target area
-    if target_display_name:
-        return [f"{location}, {target_display_name}"]
-    
-    # Fallback if no target_display_name: use city + state + country
+    # Single query: Location + Target area (use simple format: City, Country)
     city_val = target_components.get('city', '')
-    state_val = target_components.get('state', '')
     country_val = target_components.get('country', '')
     
-    if city_val and state_val and country_val:
-        return [f"{location}, {city_val}, {state_val}, {country_val}"]
-    elif city_val and country_val:
+    # Build simple query: "Location, City, Country"
+    if city_val and country_val:
         return [f"{location}, {city_val}, {country_val}"]
     elif country_val:
         return [f"{location}, {country_val}"]
     else:
-        return [location]
+        # Fallback to original target area input if components not available
+        return [f"{location}, {target_display_name}"] if target_display_name else [location]
 
 
 def _add_target_context(location: str, target_area: str) -> str:
@@ -1465,6 +1460,11 @@ if run_button and uploaded and target_area.strip():
         geocoded_lat = result.get("lat")
         geocoded_lon = result.get("lon")
         
+        # Extract location components from result to validate
+        result_components = _extract_result_location_components(result)
+        result_city = (result_components.get('city') or '').lower().strip()
+        target_city = (target_components.get('city') or '').lower().strip()
+        
         # Check if inside target area using geometry
         inside = is_inside(result, target_geom)
         audit_entry["geocoded_result"] = {
@@ -1474,10 +1474,39 @@ if run_button and uploaded and target_area.strip():
         }
         audit_entry["inside_target"] = inside
         
-        # Determine status based on geometry check
-        # Since we always query with target context first, if the location exists in the target area,
-        # it should be found and the geometry check will confirm if it's inside or outside
-        if inside is True:
+        # Validate the result makes sense
+        # Check if the result is actually the location we're looking for, not just a street/suburb with a similar name
+        location_lower = extracted_location.lower().strip()
+        result_name_lower = geocoded_name.lower()
+        
+        # Extract the first part of the result name (the actual location name)
+        result_first_part = result_name_lower.split(',')[0].strip()
+        
+        # Check if result is a street with the location name (false match)
+        # Example: "Adelaide" shouldn't match "Adelaide Street" in Melbourne
+        street_indicators = ['street', 'st', 'road', 'rd', 'avenue', 'ave', 'drive', 'dr', 'lane', 'ln', 'way', 'place', 'pl', 'boulevard', 'blvd', 'crescent', 'cres', 'court', 'ct']
+        is_street_with_location_name = (
+            (result_admin_level == 'street' or any(indicator in result_first_part for indicator in street_indicators)) and
+            location_lower in result_first_part and
+            result_first_part != location_lower  # The result name is longer than what we searched (e.g., "Adelaide Street" vs "Adelaide")
+        )
+        
+        # Check if result city doesn't match target city (different city entirely)
+        city_mismatch = result_city and target_city and result_city != target_city
+        
+        # Determine status
+        if city_mismatch:
+            # Result is in a different city - exclude
+            status = "exclude"
+            audit_entry["status"] = "exclude"
+            audit_entry["reasoning"].append(f"Geocoded location is in '{result_city}' but target is '{target_city}' - excluding")
+        elif is_street_with_location_name and inside is True:
+            # Found a street with the location name inside target - likely false match, exclude
+            # This catches "Adelaide Street" when searching for "Adelaide" in Melbourne
+            status = "exclude"
+            audit_entry["status"] = "exclude"
+            audit_entry["reasoning"].append(f"Geocoded location appears to be a street/suburb ('{result_first_part}') with similar name to searched location '{extracted_location}', not the actual location - excluding")
+        elif inside is True:
             status = "keep"
             audit_entry["status"] = "keep"
             audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is INSIDE target area '{target_display_name}'")
