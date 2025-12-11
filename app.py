@@ -1146,77 +1146,73 @@ if run_button:
         st.stop()
 
 if run_button and uploaded and target_area.strip():
-    # Step 1: Read and clean CSV
-    status_container = st.container()
-    with status_container:
-        st.info("📄 **Step 1/4:** Reading and cleaning CSV file...")
+    # Create single progress bar and status text for entire process
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Step 1: Read and clean CSV (0-20%)
+    status_text.text("Reading and cleaning CSV file...")
+    progress_bar.progress(0.05)
     
     try:
         df_raw = _read_and_clean_csv(uploaded)
-        with status_container:
-            st.success(f"✅ CSV loaded: {len(df_raw)} rows found")
+        progress_bar.progress(0.10)
+        status_text.text(f"CSV loaded: {len(df_raw)} rows found")
         
         df_cleaned = _standardize_columns(df_raw)
-        with status_container:
-            st.success(f"✅ Columns standardized: found 'search_term' and 'impressions' columns")
+        progress_bar.progress(0.20)
+        status_text.text("Columns standardized")
     except Exception as exc:
+        progress_bar.empty()
+        status_text.empty()
         st.error(f"❌ Problem reading CSV: {exc}")
         st.stop()
 
-    # Step 2: Aggregate search terms
-    with status_container:
-        st.info(f"📊 **Step 2/5:** Aggregating duplicate search terms...")
-        st.caption(f"Processing {len(df_cleaned)} rows...")
+    # Step 2: Aggregate search terms (20-40%)
+    progress_bar.progress(0.25)
+    status_text.text(f"Aggregating duplicate search terms... ({len(df_cleaned)} rows)")
     
     df_aggregated = _aggregate_search_terms(df_cleaned)
     duplicates_found = len(df_cleaned) - len(df_aggregated)
-    
-    with status_container:
-        if duplicates_found > 0:
-            st.success(f"✅ Aggregated {len(df_cleaned)} rows into {len(df_aggregated)} unique search terms ({duplicates_found} duplicates merged)")
-        else:
-            st.success(f"✅ No duplicates found: {len(df_aggregated)} unique search terms")
-        st.caption(f"Total impressions: {df_aggregated['impressions'].sum():,.0f}")
+    progress_bar.progress(0.40)
+    status_text.text(f"Aggregated: {len(df_aggregated)} unique search terms")
 
-    # Step 3: Extract locations from search terms
-    with status_container:
-        if openai_client:
-            st.info(f"🤖 **Step 3/5:** Using AI to extract location names from search terms...")
-            st.caption(f"AI is analyzing each search term to intelligently identify location names (no hardcoding!)...")
-        else:
-            st.info(f"🔍 **Step 3/5:** Extracting location names from search terms...")
-            st.caption(f"Using fallback method (OpenAI not configured)...")
+    # Step 3: Extract locations from search terms (40-60%)
+    progress_bar.progress(0.45)
+    if openai_client:
+        status_text.text("Using AI to extract location names from search terms...")
+    else:
+        status_text.text("Extracting location names from search terms...")
     
     df_locations = _extract_locations_from_search_terms(df_aggregated)
     locations_found = len(df_locations)
     terms_without_locations = len(df_aggregated) - len(df_locations)
     
-    with status_container:
-        if locations_found > 0:
-            st.success(f"✅ Extracted {locations_found} unique locations from {len(df_aggregated)} search terms")
-            if terms_without_locations > 0:
-                st.caption(f"⚠️ {terms_without_locations} search terms had no extractable location (e.g., 'locksmith near me', 'key replacement')")
-            # Show some examples
-            example_locations = df_locations.head(5)["extracted_location"].tolist()
-            st.caption(f"Sample extracted locations: {', '.join(example_locations)}")
-        else:
-            st.warning(f"⚠️ No locations could be extracted from search terms. Check if search terms contain location names.")
-            st.stop()
+    progress_bar.progress(0.60)
+    if locations_found > 0:
+        status_text.text(f"Extracted {locations_found} unique locations from {len(df_aggregated)} search terms")
+    else:
+        progress_bar.empty()
+        status_text.empty()
+        st.warning(f"⚠️ No locations could be extracted from search terms. Check if search terms contain location names.")
+        st.stop()
 
-    # Step 4: Geocode target area
-    with status_container:
-        st.info(f"🌍 **Step 4/5:** Geocoding target area '{target_area}'...")
+    # Step 4: Geocode target area (60-70%)
+    progress_bar.progress(0.65)
+    status_text.text(f"Geocoding target area '{target_area}'...")
     
     target_result, target_geom, target_warnings = geocode_target_area(target_area)
     if target_warnings:
         for w in target_warnings:
             st.warning(w)
     if target_geom is None:
+        progress_bar.empty()
+        status_text.empty()
         st.error("Could not geocode the target area. Try a more specific name.")
         st.stop()
 
-    with status_container:
-        st.success(f"✅ Target area matched: {target_result.get('display_name')}")
+    progress_bar.progress(0.70)
+    status_text.text(f"Target area matched: {target_result.get('display_name')}")
     
     # Extract target area display name for context
     target_display_name = target_result.get('display_name', target_area)
@@ -1254,27 +1250,12 @@ if run_button and uploaded and target_area.strip():
             if not target_components.get(key) and parsed_components.get(key):
                 target_components[key] = parsed_components[key]
     
-    # Step 5: Geocode extracted locations with progress
-    with status_container:
-        st.info(f"🗺️ **Step 5/5:** Geocoding {locations_found} extracted locations...")
-        # Show debug info about target area
-        if target_components:
-            debug_parts = []
-            if target_components.get('city'):
-                debug_parts.append(f"City: {target_components['city']}")
-            if target_components.get('state'):
-                debug_parts.append(f"State: {target_components['state']}")
-            if target_components.get('country'):
-                debug_parts.append(f"Country: {target_components['country']}")
-            if debug_parts:
-                st.caption(f"Target area components: {', '.join(debug_parts)}")
+    # Step 5: Geocode extracted locations (70-100%)
+    progress_bar.progress(0.75)
+    status_text.text(f"Geocoding {locations_found} extracted locations...")
     
     # Reset cache between runs if needed
     geocode.cache_clear()
-    
-    # Create progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
     
     all_records = []
     total_locations = len(df_locations)
@@ -1305,13 +1286,11 @@ if run_button and uploaded and target_area.strip():
         primary_query = queries[0] if queries else extracted_location
         audit_entry["queries_tried"] = queries.copy()
         
-        # Update progress
-        progress = (idx + 1) / total_locations
-        progress_bar.progress(progress)
-        if len(queries) > 1:
-            status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' → '{primary_query}' (will try {len(queries)} variants) | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
-        else:
-            status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' → '{primary_query}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
+        # Update progress (70% to 100% for geocoding step)
+        location_progress = (idx + 1) / total_locations
+        overall_progress = 0.70 + (location_progress * 0.30)  # 70% to 100%
+        progress_bar.progress(overall_progress)
+        status_text.text(f"Geocoding location {idx + 1}/{total_locations}: {extracted_location} | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
         # Try queries in order until one succeeds
         result = None
@@ -1395,12 +1374,13 @@ if run_button and uploaded and target_area.strip():
 
     results_df = pd.DataFrame(all_records)
     
+    # Complete progress
+    progress_bar.progress(1.0)
+    status_text.text(f"Complete! Processed {total_locations} locations ({geocoded_count} matched, {unmatched_count} unmatched)")
+    
     # Clear progress indicators
     progress_bar.empty()
     status_text.empty()
-    
-    with status_container:
-        st.success(f"✅ Geocoding complete! Processed {total_locations} locations ({geocoded_count} matched, {unmatched_count} unmatched)")
 
     keep_df = results_df[results_df["status"] == "keep"]
     exclude_df = results_df[results_df["status"] == "exclude"]
@@ -1539,7 +1519,4 @@ if run_button and uploaded and target_area.strip():
     audit_summary_df = pd.DataFrame(audit_summary)
     with st.expander("📊 Audit Summary Table"):
         st.dataframe(audit_summary_df)
-elif not run_button:
-    # Show initial state message only if Run hasn't been clicked
-    st.info("👆 Upload a CSV file, enter a target area, and click 'Run' to begin.")
 
