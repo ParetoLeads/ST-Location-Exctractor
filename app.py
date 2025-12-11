@@ -11,9 +11,10 @@ import streamlit as st
 
 # You can override the geocoder endpoint if the default is blocked on your host.
 GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/search")
-GEOCODER_API_KEY = os.getenv("GEOCODER_API_KEY")  # e.g., for https://geocode.maps.co
+_raw_key = os.getenv("GEOCODER_API_KEY", "")
+GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.02"
+APP_VERSION = "v1.03"
 
 
 st.set_page_config(page_title="Location Search Term Filter", layout="wide")
@@ -62,8 +63,13 @@ def geocode(query: str, polygon: bool = False) -> Tuple[Optional[Dict], Optional
     
     if is_maps_co:
         # geocode.maps.co format - simpler, just needs q and api_key
+        # Note: maps.co doesn't support polygon requests, so ignore polygon param
         if GEOCODER_API_KEY:
-            params["api_key"] = GEOCODER_API_KEY
+            # Strip any whitespace that might have been copied
+            clean_key = GEOCODER_API_KEY.strip()
+            params["api_key"] = clean_key
+        else:
+            return None, "API key is required for geocode.maps.co"
     else:
         # Nominatim format
         params.update({
@@ -86,7 +92,11 @@ def geocode(query: str, polygon: bool = False) -> Tuple[Optional[Dict], Optional
                 timeout=10,
             )
             if resp.status_code != 200:
-                last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                error_text = resp.text[:300]
+                last_error = f"HTTP {resp.status_code}: {error_text}"
+                # Don't retry on 401 (invalid key) - it won't work
+                if resp.status_code == 401:
+                    break
                 time.sleep(0.5)
                 continue
             data = resp.json()
@@ -201,6 +211,9 @@ def geocode_target_area(area_text: str) -> Tuple[Optional[Dict], Optional[geom.b
         error_msg = f"No match found for '{area_text}'."
         if err:
             error_msg += f" {err}"
+            # Add helpful hint for 401 errors
+            if "401" in err or "Invalid API Key" in err:
+                error_msg += " Please check your API key in Streamlit Secrets (Settings → Secrets). Make sure there are no extra spaces."
         return None, None, [error_msg]
 
     shape = location_shape(result)
@@ -230,6 +243,9 @@ throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.
 
 st.caption(f"Geocoder URL: {GEOCODER_URL}")
 st.caption(f"API key present: {'yes' if GEOCODER_API_KEY else 'no'}")
+if GEOCODER_API_KEY:
+    # Show key length for debugging (without exposing the actual key)
+    st.caption(f"API key length: {len(GEOCODER_API_KEY)} characters")
 st.caption(f"App version: {APP_VERSION}")
 
 
