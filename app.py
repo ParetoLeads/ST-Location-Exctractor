@@ -81,23 +81,17 @@ if OPENAI_AVAILABLE and OPENAI_API_KEY:
 else:
     openai_client = None
 
-# Display logo and developer info
+# Display logo
 logo_path = "assets/logo.png"
 if os.path.exists(logo_path):
     st.image(logo_path, width=300)
 
-# Developer information
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 1, 1])
-with col1:
-    st.markdown("**Developed by Nathan Shapiro**")
-with col2:
-    st.markdown(f"**App version: {APP_VERSION}**")
-with col3:
-    st.markdown("**Visit us: [Paretoleads.com](https://paretoleads.com)**")
-st.markdown("---")
+st.title("Location Search Term Filter")
 
-st.title(f"Location Search Term Filter ({APP_VERSION})")
+# Developer information (under headline)
+st.markdown(f"**App version: {APP_VERSION}**")
+st.markdown("**Developed by Nathan Shapiro**")
+st.markdown("**Visit us: [Paretoleads.com](https://paretoleads.com)**")
 
 
 # -------- Helpers -------- #
@@ -599,17 +593,17 @@ That's it!
 st.markdown("""
 <style>
     .uploadedFile {
-        min-height: 200px !important;
+        min-height: 450px !important;
         padding: 40px !important;
     }
     .stFileUploader > div {
-        min-height: 200px !important;
+        min-height: 450px !important;
     }
     [data-testid="stFileUploader"] {
-        min-height: 200px !important;
+        min-height: 450px !important;
     }
     [data-testid="stFileUploader"] > div {
-        min-height: 200px !important;
+        min-height: 450px !important;
         padding: 30px !important;
     }
     .stTextInput > div > div > input {
