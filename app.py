@@ -89,9 +89,12 @@ if os.path.exists(logo_path):
 st.title("Location Search Term Filter")
 
 # Developer information (under headline)
-st.markdown(f"**App version: {APP_VERSION}**")
-st.markdown("**Developed by Nathan Shapiro**")
-st.markdown("**Visit us: [Paretoleads.com](https://paretoleads.com)**")
+st.markdown(f"**App version:** {APP_VERSION}")
+st.markdown("**Developer:** Nathan Shapiro")
+st.markdown("**Visit us:** [Paretoleads.com](https://paretoleads.com)")
+
+# Add separator line
+st.markdown("---")
 
 
 # -------- Helpers -------- #
@@ -589,22 +592,32 @@ st.sidebar.markdown("""
 That's it!
 """)
 
-# Add custom CSS to make upload area bigger
+# Add custom CSS to make upload drop area bigger
 st.markdown("""
 <style>
-    .uploadedFile {
-        min-height: 450px !important;
-        padding: 40px !important;
-    }
-    .stFileUploader > div {
-        min-height: 450px !important;
-    }
+    /* Target the main file uploader container */
     [data-testid="stFileUploader"] {
         min-height: 450px !important;
     }
+    /* Target the drop zone wrapper */
     [data-testid="stFileUploader"] > div {
         min-height: 450px !important;
-        padding: 30px !important;
+    }
+    /* Target the actual interactive drop area */
+    [data-testid="stFileUploader"] > div > div {
+        min-height: 450px !important;
+        padding: 50px !important;
+    }
+    /* Target the drop zone content area */
+    [data-testid="stFileUploader"] > div > div > div {
+        min-height: 350px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    /* Ensure the border/background area is large */
+    [data-testid="stFileUploader"] > div > div[class*="upload"] {
+        min-height: 450px !important;
     }
     .stTextInput > div > div > input {
         font-size: 18px !important;
