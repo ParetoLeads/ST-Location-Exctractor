@@ -14,7 +14,7 @@ GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/se
 _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.03"
+APP_VERSION = "v1.04"
 
 
 st.set_page_config(page_title="Location Search Term Filter", layout="wide")
@@ -246,7 +246,27 @@ st.caption(f"API key present: {'yes' if GEOCODER_API_KEY else 'no'}")
 if GEOCODER_API_KEY:
     # Show key length for debugging (without exposing the actual key)
     st.caption(f"API key length: {len(GEOCODER_API_KEY)} characters")
+    # Show first/last 4 chars for verification (without exposing full key)
+    if len(GEOCODER_API_KEY) >= 8:
+        st.caption(f"API key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
 st.caption(f"App version: {APP_VERSION}")
+
+# Debug section - test API key
+if GEOCODER_API_KEY and "geocode.maps.co" in GEOCODER_URL:
+    with st.expander("🔧 Debug: Test API Key"):
+        if st.button("Test API Key with 'Miami, FL'"):
+            test_url = f"{GEOCODER_URL}?q=Miami, FL&api_key={GEOCODER_API_KEY}"
+            st.code(test_url, language=None)
+            try:
+                resp = requests.get(GEOCODER_URL, params={"q": "Miami, FL", "api_key": GEOCODER_API_KEY}, timeout=10)
+                st.write(f"**Status Code:** {resp.status_code}")
+                st.write(f"**Response:** {resp.text[:500]}")
+                if resp.status_code == 200:
+                    st.success("✅ API key works!")
+                else:
+                    st.error(f"❌ API key failed: {resp.text[:200]}")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 
 if uploaded and target_area.strip():
