@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.13"
+APP_VERSION = "v1.14"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -82,22 +82,57 @@ else:
     openai_client = None
 
 # Display logo and developer info
+# Logo at the top
 logo_path = "assets/logo.png"
 if os.path.exists(logo_path):
-    st.image(logo_path, width=300)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image(logo_path, width=250)
 
-# Developer information
-st.markdown("---")
-col1, col2, col3 = st.columns([1, 1, 1])
-with col1:
-    st.markdown("**Developed by Nathan Shapiro**")
-with col2:
-    st.markdown(f"**App version: {APP_VERSION}**")
-with col3:
-    st.markdown("**Visit us: [Paretoleads.com](https://paretoleads.com)**")
-st.markdown("---")
+# Main headline (no version) and styling
+st.markdown("""
+<style>
+    .main-headline {
+        font-size: 3.5rem;
+        font-weight: 700;
+        color: #1a1a1a;
+        margin-bottom: 0.5rem;
+        text-align: center;
+        margin-top: 2rem;
+    }
+    .subheadline {
+        font-size: 1.25rem;
+        color: #666;
+        text-align: center;
+        margin-bottom: 3rem;
+        font-weight: 400;
+        line-height: 1.6;
+    }
+    .dev-info {
+        font-size: 0.875rem;
+        color: #888;
+        text-align: center;
+        margin-top: 4rem;
+        padding-top: 2rem;
+        border-top: 1px solid #e0e0e0;
+    }
+    .dev-info a {
+        color: #ff6603;
+        text-decoration: none;
+        font-weight: 500;
+    }
+    .dev-info a:hover {
+        text-decoration: underline;
+    }
+    .logo-container {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-st.title(f"Location Search Term Filter ({APP_VERSION})")
+st.markdown('<h1 class="main-headline">Location Search Term Filter</h1>', unsafe_allow_html=True)
+st.markdown('<p class="subheadline">Filter and analyze location-based search terms from Google Ads</p>', unsafe_allow_html=True)
 
 
 # -------- Helpers -------- #
@@ -595,52 +630,129 @@ st.sidebar.markdown("""
 That's it!
 """)
 
-# Add custom CSS to make upload area bigger
+# Comprehensive styling inspired by file transfer sites
 st.markdown("""
 <style>
-    .uploadedFile {
-        min-height: 200px !important;
-        padding: 40px !important;
-    }
-    .stFileUploader > div {
-        min-height: 200px !important;
-    }
+    /* Upload area styling - large rectangular area */
     [data-testid="stFileUploader"] {
-        min-height: 200px !important;
+        border: 2px dashed #d0d0d0;
+        border-radius: 12px;
+        background-color: #fafafa;
+        min-height: 280px !important;
+        padding: 60px 40px !important;
+        transition: all 0.3s ease;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: #ff6603;
+        background-color: #fff5f0;
     }
     [data-testid="stFileUploader"] > div {
-        min-height: 200px !important;
-        padding: 30px !important;
+        min-height: 280px !important;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
     }
+    [data-testid="stFileUploader"] .uploadedFile {
+        min-height: 280px !important;
+        padding: 60px 40px !important;
+    }
+    
+    /* Target area input styling */
     .stTextInput > div > div > input {
         font-size: 18px !important;
-        padding: 12px !important;
+        padding: 16px 20px !important;
+        border-radius: 8px;
+        border: 2px solid #e0e0e0;
+        transition: border-color 0.3s ease;
+    }
+    .stTextInput > div > div > input:focus {
+        border-color: #ff6603;
+        outline: none;
+    }
+    
+    /* CTA Button styling - ParetoLeads orange */
+    .stButton > button {
+        background-color: #ff6603 !important;
+        color: white !important;
+        font-size: 18px !important;
+        font-weight: 600 !important;
+        padding: 18px 40px !important;
+        border-radius: 8px;
+        border: none;
+        min-height: 60px !important;
+        width: 100%;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(255, 102, 3, 0.3);
+    }
+    .stButton > button:hover {
+        background-color: #e55a00 !important;
+        box-shadow: 0 6px 16px rgba(255, 102, 3, 0.4);
+        transform: translateY(-2px);
+    }
+    .stButton > button:active {
+        transform: translateY(0);
+    }
+    
+    /* Section spacing */
+    .main-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 0 20px;
+    }
+    
+    /* Input labels */
+    .input-label {
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 12px;
+        display: block;
+    }
+    
+    /* Remove default Streamlit spacing */
+    .element-container {
+        margin-bottom: 2rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Main input widgets
-st.markdown("### Upload CSV")
+# Main container with centered content
+st.markdown('<div class="main-container">', unsafe_allow_html=True)
+
+# Upload CSV section
+st.markdown('<label class="input-label">Upload CSV from Google Ads</label>', unsafe_allow_html=True)
 uploaded = st.file_uploader(
-    "Upload CSV from Google Ads",
+    "Drag and drop your CSV file here or click to browse",
     type=["csv"],
-    help="Upload your Google Ads search terms CSV file"
+    help="Upload your Google Ads search terms CSV file",
+    label_visibility="collapsed"
 )
 
-st.markdown("### Target Area")
+# Target Area section
+st.markdown('<label class="input-label">Target Area</label>', unsafe_allow_html=True)
 target_area = st.text_input(
-    "Target area (city/region/country)",
+    "Enter target area (e.g., Adelaide, Australia)",
     value="Melbourne, Australia",
-    help="Enter the target area you want to filter locations for (e.g., 'Adelaide, Australia')"
+    help="Enter the target area you want to filter locations for",
+    label_visibility="collapsed"
 )
 
 # Advanced settings in sidebar
 with st.sidebar.expander("⚙️ Advanced Settings"):
     throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
 
-# Run button
-st.markdown("### Run Analysis")
-run_button = st.button("🚀 Run", type="primary", use_container_width=True)
+# Run button (no headline, just the button)
+run_button = st.button("Run Analysis", type="primary", use_container_width=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Developer information below everything
+st.markdown("""
+<div class="dev-info">
+    <p>Developed by Nathan Shapiro • App version: """ + APP_VERSION + """ • <a href="https://paretoleads.com" target="_blank">Visit us: Paretoleads.com</a></p>
+</div>
+""", unsafe_allow_html=True)
 
 # Technical details in collapsible section
 with st.expander("🔧 Technical Details & Status"):
