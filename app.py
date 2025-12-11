@@ -162,31 +162,123 @@ def _extract_location_from_search_term(search_term: str) -> Optional[str]:
     return None
 
 
-def _add_target_context(location: str, target_area: str) -> str:
+def _extract_location_components(display_name: str) -> Dict[str, str]:
     """
-    Add target area context to location name for better geocoding accuracy.
+    Extract key location components (city, state, country) from a geocoded display name.
+    Returns a dict with 'city', 'state', 'country' keys.
+    """
+    if not display_name:
+        return {}
     
-    Examples:
-    - "Newton" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia"
-    - "Newton, Australia" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia" (avoid duplicate)
+    # Split by comma and clean up
+    parts = [p.strip() for p in display_name.split(',')]
+    
+    components = {}
+    
+    # Typically: "City, State/Province, Country" or "City, Admin Level, State, Country"
+    # Try to identify components intelligently
+    if len(parts) >= 2:
+        # Last part is usually country
+        components['country'] = parts[-1]
+        
+        # First part is usually city
+        components['city'] = parts[0]
+        
+        # Middle parts might be state/province - look for common patterns
+        # Skip admin levels (like "City Council", "County", etc.)
+        admin_keywords = ['council', 'county', 'municipality', 'region', 'district', 'borough', 'city council', 
+                         'local government', 'lga', 'shire', 'town', 'village']
+        state_candidates = []
+        
+        for part in parts[1:-1]:  # Skip first (city) and last (country)
+            part_lower = part.lower()
+            # Skip if it looks like an admin level
+            is_admin = any(keyword in part_lower for keyword in admin_keywords)
+            # Also skip if it's the same as the city name (e.g., "Adelaide, Adelaide City Council")
+            is_duplicate_city = part_lower == parts[0].lower()
+            
+            if not is_admin and not is_duplicate_city:
+                state_candidates.append(part)
+        
+        # Use the first non-admin part as state, or join them (limit to 2 to avoid too verbose)
+        if state_candidates:
+            # Prefer shorter state names (usually states/provinces are 1-3 words)
+            # Sort by length, preferring shorter ones
+            state_candidates.sort(key=lambda x: len(x.split()))
+            components['state'] = state_candidates[0]
+        elif len(parts) >= 3:
+            # Fallback: use second-to-last part as state (might be admin level, but better than nothing)
+            potential_state = parts[-2]
+            # Only use if it doesn't look like an admin level
+            if not any(keyword in potential_state.lower() for keyword in admin_keywords):
+                components['state'] = potential_state
+    
+    return components
+
+
+def _build_contextualized_query(location: str, target_components: Dict[str, str], target_display_name: str) -> List[str]:
     """
-    if not location or not target_area:
-        return location
+    Build contextualized geocoding queries with fallback options.
+    Returns a list of query strings to try, ordered from most specific to least specific.
+    """
+    if not location:
+        return []
     
     location_lower = location.lower()
-    target_lower = target_area.lower()
+    queries = []
     
     # Check if location already contains target area (avoid duplication)
-    # Extract key words from target (city, country) to check
+    target_lower = target_display_name.lower()
     target_words = [w.strip() for w in target_lower.split(',')]
     
     # If location already contains any significant part of target, return as-is
     for word in target_words:
         if len(word) > 3 and word in location_lower:
-            return location
+            return [location]
     
-    # Append target area with comma separator
-    return f"{location}, {target_area}"
+    # Build queries from most specific to least specific
+    city = target_components.get('city', '')
+    state = target_components.get('state', '')
+    country = target_components.get('country', '')
+    
+    # Query 1: Full context (most specific)
+    if target_display_name:
+        queries.append(f"{location}, {target_display_name}")
+    
+    # Query 2: City + State + Country (if we have all components)
+    if city and state and country:
+        queries.append(f"{location}, {city}, {state}, {country}")
+    
+    # Query 3: City + Country (simpler)
+    if city and country:
+        queries.append(f"{location}, {city}, {country}")
+    
+    # Query 4: Just location (fallback)
+    queries.append(location)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_queries = []
+    for q in queries:
+        if q not in seen:
+            seen.add(q)
+            unique_queries.append(q)
+    
+    return unique_queries
+
+
+def _add_target_context(location: str, target_area: str) -> str:
+    """
+    Add target area context to location name for better geocoding accuracy.
+    This is a simple version that returns the most specific query.
+    For fallback logic, use _build_contextualized_query instead.
+    
+    Examples:
+    - "Newton" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia"
+    - "Newton, Australia" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia" (avoid duplicate)
+    """
+    queries = _build_contextualized_query(location, {}, target_area)
+    return queries[0] if queries else location
 
 
 def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
@@ -731,10 +823,54 @@ if uploaded and target_area.strip():
     
     # Extract target area display name for context
     target_display_name = target_result.get('display_name', target_area)
-
+    
+    # Extract location components for building better queries
+    # Try to get components from address details first (more reliable)
+    target_components = {}
+    if target_result.get('address'):
+        address = target_result['address']
+        # Different geocoders use different address field names
+        target_components['city'] = (
+            address.get('city') or 
+            address.get('town') or 
+            address.get('municipality') or
+            address.get('city_district') or
+            None
+        )
+        target_components['state'] = (
+            address.get('state') or 
+            address.get('region') or 
+            address.get('province') or
+            address.get('state_district') or
+            None
+        )
+        target_components['country'] = (
+            address.get('country') or
+            None
+        )
+    
+    # Fallback to parsing display_name if address details aren't available
+    if not target_components.get('city') or not target_components.get('state'):
+        parsed_components = _extract_location_components(target_display_name)
+        # Merge, preferring address details but filling gaps with parsed components
+        for key in ['city', 'state', 'country']:
+            if not target_components.get(key) and parsed_components.get(key):
+                target_components[key] = parsed_components[key]
+    
     # Step 5: Geocode extracted locations with progress
     with status_container:
         st.info(f"🗺️ **Step 5/5:** Geocoding {locations_found} extracted locations...")
+        # Show debug info about target area
+        if target_components:
+            debug_parts = []
+            if target_components.get('city'):
+                debug_parts.append(f"City: {target_components['city']}")
+            if target_components.get('state'):
+                debug_parts.append(f"State: {target_components['state']}")
+            if target_components.get('country'):
+                debug_parts.append(f"Country: {target_components['country']}")
+            if debug_parts:
+                st.caption(f"Target area components: {', '.join(debug_parts)}")
     
     # Reset cache between runs if needed
     geocode.cache_clear()
@@ -747,27 +883,50 @@ if uploaded and target_area.strip():
     total_locations = len(df_locations)
     geocoded_count = 0
     unmatched_count = 0
+    debug_info = []  # Store debug info for unmatched locations
     
     for idx, row in df_locations.iterrows():
         extracted_location = row["extracted_location"]
         original_terms = row["original_search_term"]
         impressions = row["impressions"]
         
-        # Add target area context to location for better geocoding accuracy
-        contextualized_location = _add_target_context(extracted_location, target_display_name)
+        # Build contextualized queries with fallback options
+        queries = _build_contextualized_query(extracted_location, target_components, target_display_name)
+        primary_query = queries[0] if queries else extracted_location
         
         # Update progress
         progress = (idx + 1) / total_locations
         progress_bar.progress(progress)
-        status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' → '{contextualized_location}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
+        if len(queries) > 1:
+            status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' → '{primary_query}' (will try {len(queries)} variants) | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
+        else:
+            status_text.text(f"Geocoding {idx + 1}/{total_locations}: '{extracted_location}' → '{primary_query}' | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
-        result, _ = geocode(contextualized_location, polygon=False)
+        # Try queries in order until one succeeds
+        result = None
+        error_messages = []
+        successful_query = None
         
-        if throttle:
-            time.sleep(throttle)
+        for query_idx, query in enumerate(queries):
+            result, error = geocode(query, polygon=False)
+            
+            if throttle:
+                time.sleep(throttle)
+            
+            if result is not None:
+                successful_query = query
+                break
+            else:
+                error_messages.append(f"Query {query_idx + 1} ('{query}'): {error or 'No results'}")
         
         if result is None:
             unmatched_count += 1
+            # Store debug info
+            debug_info.append({
+                "location": extracted_location,
+                "queries_tried": queries,
+                "errors": error_messages
+            })
             all_records.append(
                 {
                     "extracted_location": extracted_location,
@@ -848,6 +1007,22 @@ if uploaded and target_area.strip():
         )
         with st.expander("View unmatched locations"):
             st.dataframe(unmatched_df[["extracted_location", "original_search_terms", "impressions"]])
+        
+        # Show debug information about what queries were tried
+        if debug_info:
+            with st.expander("🔍 Debug: Queries tried for unmatched locations"):
+                st.info("This shows what geocoding queries were attempted for each unmatched location. "
+                       "This can help identify if the issue is with query formatting or if the locations don't exist in the geocoding database.")
+                for debug_item in debug_info:
+                    st.markdown(f"**{debug_item['location']}**")
+                    st.write("Queries tried:")
+                    for i, query in enumerate(debug_item['queries_tried'], 1):
+                        st.code(f"{i}. {query}")
+                    if debug_item['errors']:
+                        st.write("Errors:")
+                        for error in debug_item['errors']:
+                            st.caption(f"  • {error}")
+                    st.markdown("---")
 else:
     st.info("Upload a CSV and set a target area to begin.")
 
