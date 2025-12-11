@@ -12,9 +12,15 @@ import streamlit as st
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
-except ImportError:
+    OPENAI_IMPORT_ERROR = None
+except ImportError as e:
     OPENAI_AVAILABLE = False
     OpenAI = None
+    OPENAI_IMPORT_ERROR = str(e)
+except Exception as e:
+    OPENAI_AVAILABLE = False
+    OpenAI = None
+    OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
 # You can override the geocoder endpoint if the default is blocked on your host.
@@ -453,10 +459,14 @@ throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.
 
 st.caption(f"Geocoder URL: {GEOCODER_URL}")
 st.caption(f"Geocoder API key: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
-if openai_client:
+
+# Show OpenAI status with warning if package not available
+if not OPENAI_AVAILABLE:
+    st.error("⚠️ **OpenAI package not installed!** The `openai` package is missing. Please check the debug section below for fix instructions.")
+elif openai_client:
     st.caption(f"🤖 OpenAI API: ✅ Enabled (using LLM for intelligent location extraction)")
 else:
-    st.caption(f"🤖 OpenAI API: ❌ Not configured (using fallback extraction method)")
+    st.warning(f"🤖 OpenAI API: ⚠️ API key found but client not initialized. Check debug section.")
 if GEOCODER_API_KEY:
     # Show key length for debugging (without exposing the actual key)
     st.caption(f"Geocoder key length: {len(GEOCODER_API_KEY)} characters")
@@ -471,6 +481,16 @@ with st.expander("🔍 **DEBUG INFO - Copy this if you need help**"):
     debug_info.append("## OpenAI Configuration Debug")
     debug_info.append("")
     debug_info.append(f"- **OpenAI Package Available**: {OPENAI_AVAILABLE}")
+    if not OPENAI_AVAILABLE:
+        debug_info.append(f"- **Import Error**: {OPENAI_IMPORT_ERROR if 'OPENAI_IMPORT_ERROR' in globals() and OPENAI_IMPORT_ERROR else 'Package not installed'}")
+        debug_info.append("")
+        debug_info.append("### ⚠️ FIX REQUIRED:")
+        debug_info.append("The `openai` package is not installed. To fix:")
+        debug_info.append("1. Make sure `requirements.txt` includes `openai`")
+        debug_info.append("2. Push changes to GitHub")
+        debug_info.append("3. In Streamlit Cloud, go to Settings → Dependencies")
+        debug_info.append("4. Click 'Reboot app' to reinstall dependencies")
+        debug_info.append("")
     debug_info.append(f"- **OpenAI API Key Found**: {'Yes' if OPENAI_API_KEY else 'No'}")
     
     if OPENAI_API_KEY:
@@ -556,6 +576,25 @@ with st.expander("🔍 **DEBUG INFO - Copy this if you need help**"):
     debug_info.append("## System Information")
     debug_info.append(f"- **Python Version**: {os.sys.version.split()[0]}")
     debug_info.append(f"- **Streamlit Version**: {st.__version__}")
+    debug_info.append("")
+    
+    # Check requirements.txt
+    debug_info.append("## Requirements Check")
+    try:
+        requirements_path = "requirements.txt"
+        if os.path.exists(requirements_path):
+            with open(requirements_path, 'r') as f:
+                requirements = f.read()
+            debug_info.append(f"- **requirements.txt exists**: Yes")
+            debug_info.append(f"- **Contains 'openai'**: {'Yes' if 'openai' in requirements.lower() else 'No'}")
+            debug_info.append(f"- **Requirements file contents**:")
+            for line in requirements.strip().split('\n'):
+                if line.strip():
+                    debug_info.append(f"  - {line.strip()}")
+        else:
+            debug_info.append(f"- **requirements.txt exists**: No")
+    except Exception as e:
+        debug_info.append(f"- **Error reading requirements.txt**: {str(e)}")
     debug_info.append("")
     
     # Output as markdown
