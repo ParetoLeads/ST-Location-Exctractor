@@ -632,6 +632,29 @@ st.markdown("""
         font-size: 18px !important;
         padding: 12px !important;
     }
+    
+    /* Style the Run button with orange color */
+    button[data-testid="stBaseButton-primary"],
+    button[data-testid="baseButton-primary"],
+    button[kind="primary"] {
+        background-color: #ff6603 !important;
+        border-color: #ff6603 !important;
+        color: white !important;
+    }
+    
+    button[data-testid="stBaseButton-primary"]:hover,
+    button[data-testid="baseButton-primary"]:hover,
+    button[kind="primary"]:hover {
+        background-color: #e55a00 !important;
+        border-color: #e55a00 !important;
+    }
+    
+    button[data-testid="stBaseButton-primary"]:active,
+    button[data-testid="baseButton-primary"]:active,
+    button[kind="primary"]:active {
+        background-color: #cc4f00 !important;
+        border-color: #cc4f00 !important;
+    }
 </style>
 <script>
     // Enhanced drag-over handler targeting the correct element
@@ -745,178 +768,254 @@ with st.sidebar.expander("⚙️ Advanced Settings"):
 st.markdown("### Run Analysis")
 run_button = st.button("🚀 Run", type="primary", use_container_width=True)
 
-# Technical details in collapsible section
-with st.expander("🔧 Technical Details & Status"):
-    st.caption(f"Geocoder URL: {GEOCODER_URL}")
-    st.caption(f"Geocoder API key: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
+# Inject CSS to style the Run button with orange color
+st.markdown("""
+<style>
+    /* Target primary buttons (Run button) */
+    button[data-testid="stBaseButton-primary"],
+    button[data-testid="baseButton-primary"],
+    button[kind="primary"],
+    .stButton > button[kind="primary"] {
+        background-color: #ff6603 !important;
+        border-color: #ff6603 !important;
+        color: white !important;
+    }
     
-    # Show OpenAI status with warning if package not available
-    if not OPENAI_AVAILABLE:
-        st.error("⚠️ **OpenAI package not installed!** The `openai` package is missing. Please check the debug section below for fix instructions.")
-    elif openai_client:
-        st.caption(f"🤖 OpenAI API: ✅ Enabled (using LLM for intelligent location extraction)")
-    else:
-        st.warning(f"🤖 OpenAI API: ⚠️ API key found but client not initialized. Check debug section.")
-    if GEOCODER_API_KEY:
-        # Show key length for debugging (without exposing the actual key)
-        st.caption(f"Geocoder key length: {len(GEOCODER_API_KEY)} characters")
-        # Show first/last 4 chars for verification (without exposing full key)
-        if len(GEOCODER_API_KEY) >= 8:
-            st.caption(f"Geocoder key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
-    st.caption(f"App version: {APP_VERSION}")
+    button[data-testid="stBaseButton-primary"]:hover,
+    button[data-testid="baseButton-primary"]:hover,
+    button[kind="primary"]:hover,
+    .stButton > button[kind="primary"]:hover {
+        background-color: #e55a00 !important;
+        border-color: #e55a00 !important;
+    }
+    
+    button[data-testid="stBaseButton-primary"]:active,
+    button[data-testid="baseButton-primary"]:active,
+    button[kind="primary"]:active,
+    .stButton > button[kind="primary"]:active {
+        background-color: #cc4f00 !important;
+        border-color: #cc4f00 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Comprehensive Debug Section (moved inside Technical Details)
-with st.expander("🔍 **DEBUG INFO - Copy this if you need help**"):
-    debug_info = []
-    debug_info.append("## OpenAI Configuration Debug")
-    debug_info.append("")
-    debug_info.append(f"- **OpenAI Package Available**: {OPENAI_AVAILABLE}")
-    if not OPENAI_AVAILABLE:
-        debug_info.append(f"- **Import Error**: {OPENAI_IMPORT_ERROR if 'OPENAI_IMPORT_ERROR' in globals() and OPENAI_IMPORT_ERROR else 'Package not installed'}")
-        debug_info.append("")
-        debug_info.append("### ⚠️ FIX REQUIRED:")
-        debug_info.append("The `openai` package is not installed. To fix:")
-        debug_info.append("1. Make sure `requirements.txt` includes `openai`")
-        debug_info.append("2. Push changes to GitHub")
-        debug_info.append("3. In Streamlit Cloud, go to Settings → Dependencies")
-        debug_info.append("4. Click 'Reboot app' to reinstall dependencies")
-        debug_info.append("")
-    debug_info.append(f"- **OpenAI API Key Found**: {'Yes' if OPENAI_API_KEY else 'No'}")
+# Unified Technical Details & Status Log
+with st.expander("🔧 Technical Details & Status", expanded=False):
+    # Build comprehensive log
+    log_sections = []
     
-    if OPENAI_API_KEY:
-        debug_info.append(f"- **API Key Length**: {len(OPENAI_API_KEY)} characters")
-        debug_info.append(f"- **API Key Preview**: {OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 11 else '***'}")
-        debug_info.append(f"- **API Key Starts With**: {OPENAI_API_KEY[:3] if len(OPENAI_API_KEY) >= 3 else 'N/A'}")
+    # ========== APPLICATION INFO ==========
+    log_sections.append("## 📱 Application Information")
+    log_sections.append(f"- **App Version**: {APP_VERSION}")
+    log_sections.append(f"- **Python Version**: {os.sys.version.split()[0]}")
+    log_sections.append(f"- **Streamlit Version**: {st.__version__}")
+    log_sections.append("")
+    
+    # ========== GEOCODER CONFIGURATION ==========
+    log_sections.append("## 🌍 Geocoder Configuration")
+    log_sections.append(f"- **Geocoder URL**: {GEOCODER_URL}")
+    log_sections.append(f"- **Geocoder Service**: {'geocode.maps.co' if 'geocode.maps.co' in GEOCODER_URL else 'Nominatim (OpenStreetMap)'}")
+    log_sections.append(f"- **API Key Status**: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
+    
+    if GEOCODER_API_KEY:
+        log_sections.append(f"- **API Key Length**: {len(GEOCODER_API_KEY)} characters")
+        if len(GEOCODER_API_KEY) >= 8:
+            log_sections.append(f"- **API Key Preview**: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
+        
+        # Geocoder API Key Test (if applicable)
+        if "geocode.maps.co" in GEOCODER_URL:
+            log_sections.append("")
+            log_sections.append("### Geocoder API Key Test")
+            log_sections.append("**Troubleshooting 401 errors:**")
+            log_sections.append("1. Go to https://geocode.maps.co and log into your account")
+            log_sections.append("2. Check that your API key matches exactly what's shown in your account")
+            log_sections.append("3. Try regenerating/copying the key again")
+            log_sections.append("4. Make sure your account is active (check usage limits)")
+            log_sections.append("")
+            
+            # Test button for geocoder
+            if st.button("🧪 Test Geocoder API Key", key="test_geocoder_key"):
+                test_url = f"{GEOCODER_URL}?q=Miami, FL&api_key={GEOCODER_API_KEY}"
+                st.code(test_url, language=None)
+                try:
+                    resp = requests.get(GEOCODER_URL, params={"q": "Miami, FL", "api_key": GEOCODER_API_KEY}, timeout=10)
+                    st.write(f"**Status Code:** {resp.status_code}")
+                    st.write(f"**Response:** {resp.text[:500]}")
+                    if resp.status_code == 200:
+                        st.success("✅ Geocoder API key works!")
+                    elif resp.status_code == 401:
+                        st.error("❌ API key is INVALID. Please check the troubleshooting steps above.")
+                    else:
+                        st.error(f"❌ API key test failed: {resp.text[:200]}")
+                except Exception as e:
+                    st.error(f"Error testing API key: {e}")
     else:
-        debug_info.append("- **API Key**: Not found")
+        if "geocode.maps.co" in GEOCODER_URL:
+            log_sections.append("- **⚠️ Warning**: API key required for geocode.maps.co but not found")
     
-    debug_info.append(f"- **OpenAI Client Initialized**: {'Yes' if openai_client else 'No'}")
-    debug_info.append("")
+    log_sections.append("")
     
-    # Check Streamlit secrets
-    debug_info.append("## Streamlit Secrets Check")
+    # ========== OPENAI CONFIGURATION ==========
+    log_sections.append("## 🤖 OpenAI Configuration")
+    log_sections.append(f"- **Package Installed**: {'✅ Yes' if OPENAI_AVAILABLE else '❌ No'}")
+    
+    if not OPENAI_AVAILABLE:
+        log_sections.append(f"- **Import Error**: {OPENAI_IMPORT_ERROR if 'OPENAI_IMPORT_ERROR' in globals() and OPENAI_IMPORT_ERROR else 'Package not installed'}")
+        log_sections.append("")
+        log_sections.append("### ⚠️ FIX REQUIRED - OpenAI Package Missing")
+        log_sections.append("The `openai` package is not installed. To fix:")
+        log_sections.append("1. Make sure `requirements.txt` includes `openai`")
+        log_sections.append("2. Push changes to GitHub")
+        log_sections.append("3. In Streamlit Cloud, go to Settings → Dependencies")
+        log_sections.append("4. Click 'Reboot app' to reinstall dependencies")
+        log_sections.append("")
+    else:
+        log_sections.append(f"- **API Key Found**: {'✅ Yes' if OPENAI_API_KEY else '❌ No'}")
+        
+        if OPENAI_API_KEY:
+            log_sections.append(f"- **API Key Length**: {len(OPENAI_API_KEY)} characters")
+            log_sections.append(f"- **API Key Preview**: {OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 11 else '***'}")
+            log_sections.append(f"- **API Key Starts With**: {OPENAI_API_KEY[:3] if len(OPENAI_API_KEY) >= 3 else 'N/A'}")
+        
+        log_sections.append(f"- **Client Initialized**: {'✅ Yes' if openai_client else '❌ No'}")
+        
+        # OpenAI Connection Test
+        log_sections.append("")
+        log_sections.append("### OpenAI Connection Test")
+        if openai_client:
+            try:
+                test_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": "test"}],
+                    max_tokens=5
+                )
+                log_sections.append("- **Test API Call**: ✅ Success")
+                log_sections.append(f"- **Model Response**: {test_response.choices[0].message.content[:50]}")
+            except Exception as e:
+                log_sections.append("- **Test API Call**: ❌ Failed")
+                log_sections.append(f"- **Error**: {str(e)}")
+                log_sections.append(f"- **Error Type**: {type(e).__name__}")
+        else:
+            log_sections.append("- **Test API Call**: ⏭️ Skipped (client not initialized)")
+    
+    log_sections.append("")
+    
+    # ========== CONFIGURATION SOURCES ==========
+    log_sections.append("## 🔐 Configuration Sources")
+    
+    # Streamlit Secrets Check
+    log_sections.append("### Streamlit Secrets")
     try:
         if hasattr(st, 'secrets'):
-            debug_info.append("- **st.secrets available**: Yes")
+            log_sections.append("- **Available**: ✅ Yes")
             try:
-                # Try to get all keys
-                try:
-                    secrets_keys = list(st.secrets.keys())
-                    debug_info.append(f"- **Available secret keys**: {', '.join(secrets_keys) if secrets_keys else 'None found'}")
-                except Exception as e1:
-                    debug_info.append(f"- **Error listing keys**: {str(e1)}")
-                    secrets_keys = []
+                secrets_keys = list(st.secrets.keys())
+                log_sections.append(f"- **Available Keys**: {', '.join(secrets_keys) if secrets_keys else 'None found'}")
                 
-                # Try direct access
+                # Test OPENAI_API_KEY access
                 try:
                     direct_key = st.secrets["OPENAI_API_KEY"]
-                    debug_info.append(f"- **Direct access (st.secrets['OPENAI_API_KEY'])**: ✅ Success (length: {len(str(direct_key))})")
+                    log_sections.append(f"- **OPENAI_API_KEY (direct)**: ✅ Found (length: {len(str(direct_key))})")
                 except KeyError:
-                    debug_info.append("- **Direct access (st.secrets['OPENAI_API_KEY'])**: ❌ KeyError - key not found")
-                except Exception as e2:
-                    debug_info.append(f"- **Direct access error**: {str(e2)} ({type(e2).__name__})")
+                    log_sections.append("- **OPENAI_API_KEY (direct)**: ❌ Key not found")
+                except Exception as e:
+                    log_sections.append(f"- **OPENAI_API_KEY (direct)**: ❌ Error - {str(e)} ({type(e).__name__})")
                 
-                # Try get method
                 try:
                     get_key = st.secrets.get("OPENAI_API_KEY", None)
                     if get_key:
-                        debug_info.append(f"- **Get method (st.secrets.get('OPENAI_API_KEY'))**: ✅ Success (length: {len(str(get_key))})")
+                        log_sections.append(f"- **OPENAI_API_KEY (get method)**: ✅ Found (length: {len(str(get_key))})")
                     else:
-                        debug_info.append("- **Get method (st.secrets.get('OPENAI_API_KEY'))**: ❌ Returned None")
-                except Exception as e3:
-                    debug_info.append(f"- **Get method error**: {str(e3)} ({type(e3).__name__})")
-                
+                        log_sections.append("- **OPENAI_API_KEY (get method)**: ❌ Returned None")
+                except Exception as e:
+                    log_sections.append(f"- **OPENAI_API_KEY (get method)**: ❌ Error - {str(e)} ({type(e).__name__})")
             except Exception as e:
-                debug_info.append(f"- **Error reading secrets**: {str(e)} ({type(e).__name__})")
+                log_sections.append(f"- **Error reading secrets**: {str(e)} ({type(e).__name__})")
         else:
-            debug_info.append("- **st.secrets available**: No")
+            log_sections.append("- **Available**: ❌ No")
     except Exception as e:
-        debug_info.append(f"- **Error checking secrets**: {str(e)} ({type(e).__name__})")
-    debug_info.append("")
+        log_sections.append(f"- **Error**: {str(e)} ({type(e).__name__})")
     
-    # Environment variables check
-    debug_info.append("## Environment Variables Check")
+    log_sections.append("")
+    
+    # Environment Variables Check
+    log_sections.append("### Environment Variables")
     env_openai = os.getenv("OPENAI_API_KEY", None)
-    debug_info.append(f"- **OPENAI_API_KEY in env**: {'Yes' if env_openai else 'No'}")
+    env_geocoder_key = os.getenv("GEOCODER_API_KEY", None)
+    env_geocoder_url = os.getenv("GEOCODER_URL", None)
+    
+    log_sections.append(f"- **OPENAI_API_KEY**: {'✅ Found' if env_openai else '❌ Not set'}")
     if env_openai:
-        debug_info.append(f"- **Env key length**: {len(env_openai)} characters")
-    debug_info.append("")
+        log_sections.append(f"  - Length: {len(env_openai)} characters")
     
-    # Test OpenAI connection
-    debug_info.append("## OpenAI Connection Test")
-    if openai_client:
-        try:
-            # Try a simple test call
-            test_response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=5
-            )
-            debug_info.append("- **Test API Call**: ✅ Success")
-            debug_info.append(f"- **Model Response**: {test_response.choices[0].message.content[:50]}")
-        except Exception as e:
-            debug_info.append(f"- **Test API Call**: ❌ Failed")
-            debug_info.append(f"- **Error**: {str(e)}")
-            debug_info.append(f"- **Error Type**: {type(e).__name__}")
-    else:
-        debug_info.append("- **Test API Call**: Skipped (client not initialized)")
-    debug_info.append("")
+    log_sections.append(f"- **GEOCODER_API_KEY**: {'✅ Found' if env_geocoder_key else '❌ Not set'}")
+    if env_geocoder_key:
+        log_sections.append(f"  - Length: {len(env_geocoder_key)} characters")
     
-    # System info
-    debug_info.append("## System Information")
-    debug_info.append(f"- **Python Version**: {os.sys.version.split()[0]}")
-    debug_info.append(f"- **Streamlit Version**: {st.__version__}")
-    debug_info.append("")
+    log_sections.append(f"- **GEOCODER_URL**: {'✅ Set' if env_geocoder_url else '❌ Using default'}")
+    if env_geocoder_url:
+        log_sections.append(f"  - Value: {env_geocoder_url}")
     
-    # Check requirements.txt
-    debug_info.append("## Requirements Check")
+    log_sections.append("")
+    
+    # ========== DEPENDENCIES ==========
+    log_sections.append("## 📦 Dependencies")
     try:
         requirements_path = "requirements.txt"
         if os.path.exists(requirements_path):
             with open(requirements_path, 'r') as f:
                 requirements = f.read()
-            debug_info.append(f"- **requirements.txt exists**: Yes")
-            debug_info.append(f"- **Contains 'openai'**: {'Yes' if 'openai' in requirements.lower() else 'No'}")
-            debug_info.append(f"- **Requirements file contents**:")
+            log_sections.append("- **requirements.txt**: ✅ Found")
+            log_sections.append(f"- **Contains 'openai'**: {'✅ Yes' if 'openai' in requirements.lower() else '❌ No'}")
+            log_sections.append("- **Installed Packages**:")
             for line in requirements.strip().split('\n'):
                 if line.strip():
-                    debug_info.append(f"  - {line.strip()}")
+                    log_sections.append(f"  - {line.strip()}")
         else:
-            debug_info.append(f"- **requirements.txt exists**: No")
+            log_sections.append("- **requirements.txt**: ❌ Not found")
     except Exception as e:
-        debug_info.append(f"- **Error reading requirements.txt**: {str(e)}")
-    debug_info.append("")
+        log_sections.append(f"- **Error reading requirements.txt**: {str(e)}")
     
-    # Output as markdown
-    st.markdown("\n".join(debug_info))
+    log_sections.append("")
     
-    # Also provide as copyable text
+    # ========== STATUS SUMMARY ==========
+    log_sections.append("## 📊 Status Summary")
+    
+    # Determine overall status
+    status_items = []
+    if OPENAI_AVAILABLE and openai_client:
+        status_items.append("✅ OpenAI: Ready")
+    elif OPENAI_AVAILABLE and OPENAI_API_KEY:
+        status_items.append("⚠️ OpenAI: Package OK but client not initialized")
+    elif OPENAI_AVAILABLE:
+        status_items.append("⚠️ OpenAI: Package installed but API key missing")
+    else:
+        status_items.append("❌ OpenAI: Package not installed")
+    
+    if GEOCODER_API_KEY or "nominatim" in GEOCODER_URL.lower():
+        status_items.append("✅ Geocoder: Configured")
+    else:
+        status_items.append("⚠️ Geocoder: API key missing (required for geocode.maps.co)")
+    
+    for item in status_items:
+        log_sections.append(f"- {item}")
+    
+    log_sections.append("")
+    log_sections.append("---")
+    log_sections.append("")
+    log_sections.append("**💡 Tip**: Copy the log below if you need help debugging. It contains all the information needed to diagnose issues.")
+    
+    # Display the log
+    log_text = "\n".join(log_sections)
+    st.markdown(log_text)
+    
+    # Copyable text area
     st.text_area(
-        "📋 Copy this debug info:",
-        value="\n".join(debug_info),
-        height=400,
-        key="debug_output"
+        "📋 Copy this complete log for debugging:",
+        value=log_text,
+        height=500,
+        key="technical_log_output"
     )
-
-# Debug section - test API key
-if GEOCODER_API_KEY and "geocode.maps.co" in GEOCODER_URL:
-    with st.expander("🔧 Debug: Test API Key"):
-        st.info("**If you're getting 401 errors:**\n1. Go to https://geocode.maps.co and log into your account\n2. Check that your API key matches exactly what's shown in your account\n3. Try regenerating/copying the key again\n4. Make sure your account is active (check usage limits)")
-        if st.button("Test API Key with 'Miami, FL'"):
-            test_url = f"{GEOCODER_URL}?q=Miami, FL&api_key={GEOCODER_API_KEY}"
-            st.code(test_url, language=None)
-            try:
-                resp = requests.get(GEOCODER_URL, params={"q": "Miami, FL", "api_key": GEOCODER_API_KEY}, timeout=10)
-                st.write(f"**Status Code:** {resp.status_code}")
-                st.write(f"**Response:** {resp.text[:500]}")
-                if resp.status_code == 200:
-                    st.success("✅ API key works!")
-                elif resp.status_code == 401:
-                    st.error(f"❌ API key is INVALID. Please:\n1. Check https://geocode.maps.co - log in and verify your key\n2. Copy the key directly from the website (don't type it)\n3. Make sure there are no spaces before/after the key in Streamlit Secrets\n4. Try regenerating your API key if it still doesn't work")
-                else:
-                    st.error(f"❌ API key failed: {resp.text[:200]}")
-            except Exception as e:
-                st.error(f"Error: {e}")
 
 
 # Only process if Run button is clicked and inputs are provided
