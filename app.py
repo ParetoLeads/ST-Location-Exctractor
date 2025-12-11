@@ -21,7 +21,18 @@ except ImportError:
 GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/search")
 _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
-_openai_key = os.getenv("OPENAI_API_KEY", "")
+
+# Get OpenAI API key from Streamlit secrets (preferred) or environment variable
+try:
+    # Try Streamlit secrets first (for Streamlit Cloud)
+    _openai_key = st.secrets.get("OPENAI_API_KEY", "") if hasattr(st, 'secrets') else ""
+    if not _openai_key:
+        # Fallback to environment variable (for local development)
+        _openai_key = os.getenv("OPENAI_API_KEY", "")
+except Exception:
+    # If secrets not available, try environment variable
+    _openai_key = os.getenv("OPENAI_API_KEY", "")
+
 OPENAI_API_KEY = _openai_key.strip() if _openai_key else None
 USER_AGENT = "location-filter-app/1.0"
 APP_VERSION = "v1.08"
@@ -31,7 +42,8 @@ openai_client = None
 if OPENAI_AVAILABLE and OPENAI_API_KEY:
     try:
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    except Exception:
+    except Exception as e:
+        # Log error but don't crash - will use fallback
         openai_client = None
 
 
