@@ -171,6 +171,58 @@ def _extract_location_from_search_term(search_term: str) -> Optional[str]:
     return None
 
 
+@lru_cache(maxsize=1000)
+def _check_location_inside_target_with_llm(final_location: str, target_area: str) -> Tuple[bool, str]:
+    """
+    Use LLM to determine if a location is inside the target area.
+    Returns (is_inside, reasoning)
+    
+    Example:
+    - final_location: "adelaide melbourne australia"
+    - target_area: "melbourne australia"
+    - Should return False because Adelaide is not in Melbourne
+    """
+    if not openai_client:
+        return False, "LLM not available"
+    
+    if not final_location or not target_area:
+        return False, "Missing location or target area"
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a geography expert. Determine if a location is inside/within a target area. Consider:\n- Is the location a suburb, neighborhood, or part of the target area?\n- Is the location a different city/region that is NOT within the target area?\n- Be precise: 'adelaide melbourne australia' means Adelaide is NOT in Melbourne (they are different cities).\n- 'brighton melbourne australia' means Brighton suburb IS in Melbourne.\n\nRespond with ONLY 'YES' if the location is inside the target area, or 'NO' followed by a brief reason if it's not."
+                },
+                {
+                    "role": "user",
+                    "content": f"Location: '{final_location}'\nTarget area: '{target_area}'\n\nIs the location inside/within the target area? Answer 'YES' or 'NO' with a brief reason."
+                }
+            ],
+            temperature=0.1,
+            max_tokens=100,
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        answer_upper = answer.upper()
+        
+        if answer_upper.startswith("YES"):
+            reason = answer[3:].strip() if len(answer) > 3 else "Location is inside target area"
+            return True, f"LLM: {reason}"
+        elif answer_upper.startswith("NO"):
+            reason = answer[2:].strip() if len(answer) > 2 else "Location is not inside target area"
+            return False, f"LLM: {reason}"
+        else:
+            # If response format is unexpected, default to False (conservative)
+            return False, f"LLM response unclear, defaulting to outside: {answer}"
+        
+    except Exception as e:
+        # If LLM fails, default to False (conservative approach)
+        return False, f"LLM error: {str(e)}"
+
+
 def _extract_location_components(display_name: str) -> Dict[str, str]:
     """
     Extract key location components (city, state, country) from a geocoded display name.
@@ -1317,230 +1369,67 @@ if run_button and uploaded and target_area.strip():
         st.warning(f"⚠️ No locations could be extracted from search terms. Check if search terms contain location names.")
         st.stop()
 
-    # Step 4: Geocode target area (60-70%)
+    # Step 4: Validate locations using LLM (60-100%)
     progress_bar.progress(0.65)
-    status_text.text(f"Geocoding target area '{target_area}'...")
+    status_text.text(f"Validating {locations_found} locations using AI...")
     
-    target_result, target_geom, target_warnings = geocode_target_area(target_area)
-    if target_warnings:
-        for w in target_warnings:
-            st.warning(w)
-    if target_geom is None:
+    if not openai_client:
         progress_bar.empty()
         status_text.empty()
-        st.error("Could not geocode the target area. Try a more specific name.")
+        st.error("❌ OpenAI API is required for location validation. Please configure your API key.")
         st.stop()
-
-    progress_bar.progress(0.70)
-    status_text.text(f"Target area matched: {target_result.get('display_name')}")
-    
-    # Extract target area display name for context
-    target_display_name = target_result.get('display_name', target_area)
-    
-    # Extract location components for building better queries
-    # Try to get components from address details first (more reliable)
-    target_components = {}
-    if target_result.get('address'):
-        address = target_result['address']
-        # Different geocoders use different address field names
-        target_components['city'] = (
-            address.get('city') or 
-            address.get('town') or 
-            address.get('municipality') or
-            address.get('city_district') or
-            None
-        )
-        target_components['state'] = (
-            address.get('state') or 
-            address.get('region') or 
-            address.get('province') or
-            address.get('state_district') or
-            None
-        )
-        target_components['country'] = (
-            address.get('country') or
-            None
-        )
-    
-    # Fallback to parsing display_name if address details aren't available
-    if not target_components.get('city') or not target_components.get('state'):
-        parsed_components = _extract_location_components(target_display_name)
-        # Merge, preferring address details but filling gaps with parsed components
-        for key in ['city', 'state', 'country']:
-            if not target_components.get(key) and parsed_components.get(key):
-                target_components[key] = parsed_components[key]
-    
-    # Step 5: Geocode extracted locations (70-100%)
-    progress_bar.progress(0.75)
-    status_text.text(f"Geocoding {locations_found} extracted locations...")
-    
-    # Reset cache between runs if needed
-    geocode.cache_clear()
     
     all_records = []
     total_locations = len(df_locations)
-    geocoded_count = 0
+    validated_count = 0
     unmatched_count = 0
-    audit_log = []  # Comprehensive audit log for all locations
+    audit_log = []
     
     for idx, row in df_locations.iterrows():
         extracted_location = row["extracted_location"]
         original_terms = row["original_search_term"]
         impressions = row["impressions"]
         
-        # Initialize audit log entry for this location
+        # Initialize audit log entry
         audit_entry = {
             "original_search_terms": original_terms,
             "extracted_location": extracted_location,
             "impressions": impressions,
-            "queries_tried": [],
-            "successful_query": None,
-            "geocoded_result": None,
+            "final_location": None,
             "inside_target": None,
             "status": None,
             "reasoning": []
         }
         
-        # Build contextualized queries with fallback options
-        queries = _build_contextualized_query(extracted_location, target_components, target_display_name)
-        primary_query = queries[0] if queries else extracted_location
-        audit_entry["queries_tried"] = queries.copy()
+        # Build final location: "extracted_location target_area" (space-separated)
+        final_location = f"{extracted_location} {target_area}".strip()
+        audit_entry["final_location"] = final_location
         
-        # Update progress (70% to 100% for geocoding step)
+        # Update progress (65% to 100%)
         location_progress = (idx + 1) / total_locations
-        overall_progress = 0.70 + (location_progress * 0.30)  # 70% to 100%
+        overall_progress = 0.65 + (location_progress * 0.35)
         progress_bar.progress(overall_progress)
-        status_text.text(f"Geocoding location {idx + 1}/{total_locations}: {extracted_location} | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
+        status_text.text(f"Validating location {idx + 1}/{total_locations}: {extracted_location} | Inside: {validated_count} | Outside: {unmatched_count}")
         
-        # Try single query: extracted location + target area
-        result = None
-        error_message = None
-        successful_query = None
-        result_admin_level = None
-        
-        # Should only have one query now
-        query = queries[0] if queries else extracted_location
-        
-        result, error = geocode(query, polygon=False)
-        
+        # Small delay to avoid rate limiting
         if throttle:
             time.sleep(throttle)
         
-        if result is not None:
-            # Get administrative level for logging
-            admin_level = _get_result_administrative_level(result)
-            successful_query = query
-            result_admin_level = admin_level
-            audit_entry["successful_query"] = query
-            audit_entry["reasoning"].append(f"Query succeeded: '{query}' (found {admin_level} level location)")
-        else:
-            error_message = error or "No results returned"
-            audit_entry["reasoning"].append(f"Query failed: '{query}' → {error_message}")
-        
-        if result is None:
-            unmatched_count += 1
-            audit_entry["status"] = "unmatched"
-            audit_entry["reasoning"].append("Query failed - location could not be geocoded")
-            audit_log.append(audit_entry)
-            all_records.append(
-                {
-                    "extracted_location": extracted_location,
-                    "original_search_terms": original_terms,
-                    "impressions": impressions,
-                    "geocoded_name": None,
-                    "lat": None,
-                    "lon": None,
-                    "status": "unmatched",
-                }
-            )
-            continue
-
-        geocoded_count += 1
-        geocoded_name = result.get("display_name", "")
-        geocoded_lat = result.get("lat")
-        geocoded_lon = result.get("lon")
-        
-        # Extract location components from result to validate
-        result_components = _extract_result_location_components(result)
-        result_city = (result_components.get('city') or '').lower().strip()
-        target_city = (target_components.get('city') or '').lower().strip()
-        
-        # Check if inside target area using geometry
-        inside = is_inside(result, target_geom)
-        audit_entry["geocoded_result"] = {
-            "name": geocoded_name,
-            "lat": geocoded_lat,
-            "lon": geocoded_lon
-        }
-        audit_entry["inside_target"] = inside
-        
-        # Validate the result makes sense
-        # The result name should match the searched location name closely
-        location_lower = extracted_location.lower().strip()
-        result_name_lower = geocoded_name.lower()
-        
-        # Extract the first part of the result name (the actual location name)
-        result_first_part = result_name_lower.split(',')[0].strip()
-        
-        # Normalize both for comparison
-        location_normalized = ' '.join(location_lower.split())
-        result_first_normalized = ' '.join(result_first_part.split())
-        
-        # Check if the result's first part matches the searched location name
-        exact_match = result_first_normalized == location_normalized
-        starts_with_exact = result_first_normalized.startswith(location_normalized + ' ') or result_first_normalized.startswith(location_normalized + ',')
-        
-        # Check for indicators that suggest this is NOT the actual location
-        false_match_indicators = ['street', 'st', 'road', 'rd', 'avenue', 'ave', 'drive', 'dr', 'lane', 'ln', 'way', 'place', 'pl', 'boulevard', 'blvd', 'crescent', 'cres', 'court', 'ct', 'reserve', 'creek', 'bridge', 'institute', 'school', 'hospital', 'university', 'w e', 'w.', 'e ']
-        has_false_match_indicator = any(indicator in result_first_normalized for indicator in false_match_indicators)
-        
-        # Check if result city doesn't match target city
-        city_mismatch = result_city and target_city and result_city != target_city
-        
-        # Determine if this is a false match
-        is_false_match = False
-        false_match_reason = None
-        
-        if city_mismatch:
-            is_false_match = True
-            false_match_reason = f"Result city '{result_city}' doesn't match target city '{target_city}'"
-        elif not exact_match and not starts_with_exact:
-            # Result name doesn't match exactly or start with location name
-            if location_normalized in result_first_normalized:
-                # Location name is contained in result, but result is different
-                if has_false_match_indicator:
-                    is_false_match = True
-                    false_match_reason = f"Result '{result_first_part}' contains location name but appears to be a place/street with similar name, not the actual location"
-                elif len(result_first_normalized) > len(location_normalized) + 5:
-                    # Result is significantly longer (e.g., "W E Newton Reserve" vs "Newton")
-                    is_false_match = True
-                    false_match_reason = f"Result '{result_first_part}' is significantly different from searched location '{extracted_location}' (likely false match)"
-            else:
-                # Location name is not contained in result - definitely false match
-                is_false_match = True
-                false_match_reason = f"Result '{result_first_part}' doesn't match searched location '{extracted_location}'"
-        elif has_false_match_indicator and not exact_match:
-            # Has false match indicator and not exact match (e.g., "Adelaide Street" vs "Adelaide")
-            is_false_match = True
-            false_match_reason = f"Result '{result_first_part}' appears to be a street/place with similar name, not the actual location"
+        # Ask LLM if the location is inside the target area
+        is_inside, reasoning = _check_location_inside_target_with_llm(final_location, target_area)
+        audit_entry["inside_target"] = is_inside
+        audit_entry["reasoning"].append(f"Final location: '{final_location}'")
+        audit_entry["reasoning"].append(f"LLM check: {reasoning}")
         
         # Determine status
-        if is_false_match:
-            status = "exclude"
-            audit_entry["status"] = "exclude"
-            audit_entry["reasoning"].append(false_match_reason)
-        elif inside is True:
+        if is_inside:
             status = "keep"
             audit_entry["status"] = "keep"
-            audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is INSIDE target area '{target_display_name}'")
-        elif inside is False:
+            validated_count += 1
+        else:
             status = "exclude"
             audit_entry["status"] = "exclude"
-            audit_entry["reasoning"].append(f"Geocoded location '{geocoded_name}' is OUTSIDE target area '{target_display_name}'")
-        else:
-            status = "unmatched"
-            audit_entry["status"] = "unmatched"
-            audit_entry["reasoning"].append(f"Could not determine if '{geocoded_name}' is inside/outside target area (geometry check returned None)")
+            unmatched_count += 1
         
         audit_log.append(audit_entry)
         all_records.append(
@@ -1548,9 +1437,7 @@ if run_button and uploaded and target_area.strip():
                 "extracted_location": extracted_location,
                 "original_search_terms": original_terms,
                 "impressions": impressions,
-                "geocoded_name": geocoded_name,
-                "lat": geocoded_lat,
-                "lon": geocoded_lon,
+                "final_location": final_location,
                 "status": status,
             }
         )
@@ -1559,7 +1446,7 @@ if run_button and uploaded and target_area.strip():
     
     # Complete progress
     progress_bar.progress(1.0)
-    status_text.text(f"Complete! Processed {total_locations} locations ({geocoded_count} matched, {unmatched_count} unmatched)")
+    status_text.text(f"Complete! Processed {total_locations} locations ({validated_count} inside target, {unmatched_count} outside target)")
     
     # Clear progress indicators
     progress_bar.empty()
@@ -1570,14 +1457,14 @@ if run_button and uploaded and target_area.strip():
     unmatched_df = results_df[results_df["status"] == "unmatched"]
 
     agg_keep = (
-        keep_df.groupby("geocoded_name", dropna=True)["impressions"].sum().reset_index()
+        keep_df.groupby("extracted_location", dropna=True)["impressions"].sum().reset_index()
         if not keep_df.empty
-        else pd.DataFrame(columns=["geocoded_name", "impressions"])
+        else pd.DataFrame(columns=["extracted_location", "impressions"])
     )
     agg_exclude = (
-        exclude_df.groupby("geocoded_name", dropna=True)["impressions"].sum().reset_index()
+        exclude_df.groupby("extracted_location", dropna=True)["impressions"].sum().reset_index()
         if not exclude_df.empty
-        else pd.DataFrame(columns=["geocoded_name", "impressions"])
+        else pd.DataFrame(columns=["extracted_location", "impressions"])
     )
 
     st.subheader("✅ Suggested keeps (locations inside target area)")
@@ -1595,46 +1482,36 @@ if run_button and uploaded and target_area.strip():
         st.caption(f"Total impressions to exclude: {agg_exclude['impressions'].sum():,.0f}")
     else:
         st.info("No locations found outside the target area.")
+    
+    if not unmatched_df.empty:
+        st.warning(
+            f"⚠️ {len(unmatched_df)} extracted locations were marked as unmatched. "
+            "These may need manual review."
+        )
+        with st.expander("View unmatched locations"):
+            st.dataframe(unmatched_df[["extracted_location", "original_search_terms", "impressions"]])
 
     st.subheader("📋 Detailed results (all locations)")
     st.dataframe(results_df.sort_values("impressions", ascending=False))
     download_link("Download full results", results_df, "results.csv", "full-results")
 
-    if not unmatched_df.empty:
-        st.warning(
-            f"⚠️ {len(unmatched_df)} extracted locations could not be geocoded. "
-            "These may be invalid location names or need manual review. "
-            "Try adjusting the throttle if rate-limited."
-        )
-        with st.expander("View unmatched locations"):
-            st.dataframe(unmatched_df[["extracted_location", "original_search_terms", "impressions"]])
-    
     # Comprehensive Audit Log
     st.subheader("📋 Audit Log - Complete Workflow")
     st.info(
         "This log shows the complete workflow for each location: original search terms → extracted location → "
-        "geocoding queries tried → results → final status. Use this to audit and debug the process."
+        "final location (with target area) → LLM validation → final status. Use this to audit and debug the process."
     )
     
     # Create formatted audit log text
     audit_log_text = []
     audit_log_text.append("=" * 80)
-    audit_log_text.append("AUDIT LOG - Location Geocoding Workflow")
+    audit_log_text.append("AUDIT LOG - Location Validation Workflow")
     audit_log_text.append("=" * 80)
-    audit_log_text.append(f"Target Area (Input): {target_area}")
-    audit_log_text.append(f"Target Area (Geocoded): {target_display_name}")
-    if target_components:
-        audit_log_text.append("Target Components Extracted:")
-        if target_components.get('city'):
-            audit_log_text.append(f"  City: {target_components['city']}")
-        if target_components.get('state'):
-            audit_log_text.append(f"  State/Province: {target_components['state']}")
-        if target_components.get('country'):
-            audit_log_text.append(f"  Country: {target_components['country']}")
+    audit_log_text.append(f"Target Area: {target_area}")
     audit_log_text.append("")
     audit_log_text.append(f"Total Locations Processed: {total_locations}")
-    audit_log_text.append(f"Successfully Geocoded: {geocoded_count}")
-    audit_log_text.append(f"Unmatched: {unmatched_count}")
+    audit_log_text.append(f"Inside Target Area: {validated_count}")
+    audit_log_text.append(f"Outside Target Area: {unmatched_count}")
     audit_log_text.append("")
     audit_log_text.append("=" * 80)
     audit_log_text.append("")
@@ -1647,21 +1524,8 @@ if run_button and uploaded and target_area.strip():
         audit_log_text.append(f"Impressions: {entry['impressions']}")
         audit_log_text.append("")
         
-        audit_log_text.append("Geocoding Queries Tried:")
-        for i, query in enumerate(entry['queries_tried'], 1):
-            marker = "✓" if query == entry['successful_query'] else "✗"
-            audit_log_text.append(f"  {marker} Query {i}: {query}")
-        audit_log_text.append("")
-        
-        if entry['successful_query']:
-            audit_log_text.append(f"Successful Query: {entry['successful_query']}")
-            if entry['geocoded_result']:
-                audit_log_text.append(f"Geocoded Result:")
-                audit_log_text.append(f"  Name: {entry['geocoded_result']['name']}")
-                audit_log_text.append(f"  Coordinates: ({entry['geocoded_result']['lat']}, {entry['geocoded_result']['lon']})")
-                audit_log_text.append(f"  Inside Target Area: {entry['inside_target']}")
-        else:
-            audit_log_text.append("Successful Query: NONE (all queries failed)")
+        audit_log_text.append(f"Final Location: {entry['final_location']}")
+        audit_log_text.append(f"Inside Target Area: {entry['inside_target']}")
         audit_log_text.append("")
         
         audit_log_text.append("Reasoning:")
@@ -1692,9 +1556,7 @@ if run_button and uploaded and target_area.strip():
         audit_summary.append({
             "Original Search Terms": entry['original_search_terms'],
             "Extracted Location": entry['extracted_location'],
-            "Queries Tried": len(entry['queries_tried']),
-            "Successful Query": entry['successful_query'] or "None",
-            "Geocoded Name": entry['geocoded_result']['name'] if entry['geocoded_result'] else "N/A",
+            "Final Location": entry['final_location'],
             "Inside Target": str(entry['inside_target']) if entry['inside_target'] is not None else "N/A",
             "Status": entry['status'].upper()
         })
