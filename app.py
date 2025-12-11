@@ -22,32 +22,59 @@ GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/se
 _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
-# Get OpenAI API key from Streamlit secrets (preferred) or environment variable
-try:
-    # Try Streamlit secrets first (for Streamlit Cloud)
-    _openai_key = st.secrets.get("OPENAI_API_KEY", "") if hasattr(st, 'secrets') else ""
-    if not _openai_key:
-        # Fallback to environment variable (for local development)
-        _openai_key = os.getenv("OPENAI_API_KEY", "")
-except Exception:
-    # If secrets not available, try environment variable
-    _openai_key = os.getenv("OPENAI_API_KEY", "")
-
-OPENAI_API_KEY = _openai_key.strip() if _openai_key else None
 USER_AGENT = "location-filter-app/1.0"
 APP_VERSION = "v1.08"
 
-# Initialize OpenAI client if available and API key is set
+# Function to get OpenAI API key from Streamlit secrets or environment
+def _get_openai_api_key():
+    """Get OpenAI API key from Streamlit secrets or environment variable."""
+    _openai_key = None
+    
+    # Try Streamlit secrets first (for Streamlit Cloud)
+    try:
+        if hasattr(st, 'secrets'):
+            # Try direct access
+            try:
+                _openai_key = st.secrets["OPENAI_API_KEY"]
+            except (KeyError, AttributeError, TypeError):
+                # Try get method
+                try:
+                    _openai_key = st.secrets.get("OPENAI_API_KEY", None)
+                except (AttributeError, TypeError):
+                    pass
+    except Exception:
+        pass
+    
+    # Fallback to environment variable (for local development)
+    if not _openai_key:
+        _openai_key = os.getenv("OPENAI_API_KEY", None)
+    
+    # Convert to string and strip
+    if _openai_key:
+        _openai_key = str(_openai_key).strip()
+        return _openai_key if _openai_key else None
+    
+    return None
+
+# Initialize OpenAI client (will be set after Streamlit initializes)
 openai_client = None
+
+
+st.set_page_config(page_title="Location Search Term Filter", layout="wide")
+
+# Get OpenAI API key now that Streamlit is initialized
+OPENAI_API_KEY = _get_openai_api_key()
+
+# Initialize OpenAI client if available and API key is set
 if OPENAI_AVAILABLE and OPENAI_API_KEY:
     try:
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
     except Exception as e:
         # Log error but don't crash - will use fallback
         openai_client = None
+else:
+    openai_client = None
 
-
-st.set_page_config(page_title="Location Search Term Filter", layout="wide")
 st.title(f"Location Search Term Filter ({APP_VERSION})")
 st.write(
     "Upload a CSV of search terms with impressions, enter a target area (e.g., "
@@ -437,6 +464,110 @@ if GEOCODER_API_KEY:
     if len(GEOCODER_API_KEY) >= 8:
         st.caption(f"Geocoder key preview: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
 st.caption(f"App version: {APP_VERSION}")
+
+# Comprehensive Debug Section
+with st.expander("🔍 **DEBUG INFO - Copy this if you need help**"):
+    debug_info = []
+    debug_info.append("## OpenAI Configuration Debug")
+    debug_info.append("")
+    debug_info.append(f"- **OpenAI Package Available**: {OPENAI_AVAILABLE}")
+    debug_info.append(f"- **OpenAI API Key Found**: {'Yes' if OPENAI_API_KEY else 'No'}")
+    
+    if OPENAI_API_KEY:
+        debug_info.append(f"- **API Key Length**: {len(OPENAI_API_KEY)} characters")
+        debug_info.append(f"- **API Key Preview**: {OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 11 else '***'}")
+        debug_info.append(f"- **API Key Starts With**: {OPENAI_API_KEY[:3] if len(OPENAI_API_KEY) >= 3 else 'N/A'}")
+    else:
+        debug_info.append("- **API Key**: Not found")
+    
+    debug_info.append(f"- **OpenAI Client Initialized**: {'Yes' if openai_client else 'No'}")
+    debug_info.append("")
+    
+    # Check Streamlit secrets
+    debug_info.append("## Streamlit Secrets Check")
+    try:
+        if hasattr(st, 'secrets'):
+            debug_info.append("- **st.secrets available**: Yes")
+            try:
+                # Try to get all keys
+                try:
+                    secrets_keys = list(st.secrets.keys())
+                    debug_info.append(f"- **Available secret keys**: {', '.join(secrets_keys) if secrets_keys else 'None found'}")
+                except Exception as e1:
+                    debug_info.append(f"- **Error listing keys**: {str(e1)}")
+                    secrets_keys = []
+                
+                # Try direct access
+                try:
+                    direct_key = st.secrets["OPENAI_API_KEY"]
+                    debug_info.append(f"- **Direct access (st.secrets['OPENAI_API_KEY'])**: ✅ Success (length: {len(str(direct_key))})")
+                except KeyError:
+                    debug_info.append("- **Direct access (st.secrets['OPENAI_API_KEY'])**: ❌ KeyError - key not found")
+                except Exception as e2:
+                    debug_info.append(f"- **Direct access error**: {str(e2)} ({type(e2).__name__})")
+                
+                # Try get method
+                try:
+                    get_key = st.secrets.get("OPENAI_API_KEY", None)
+                    if get_key:
+                        debug_info.append(f"- **Get method (st.secrets.get('OPENAI_API_KEY'))**: ✅ Success (length: {len(str(get_key))})")
+                    else:
+                        debug_info.append("- **Get method (st.secrets.get('OPENAI_API_KEY'))**: ❌ Returned None")
+                except Exception as e3:
+                    debug_info.append(f"- **Get method error**: {str(e3)} ({type(e3).__name__})")
+                
+            except Exception as e:
+                debug_info.append(f"- **Error reading secrets**: {str(e)} ({type(e).__name__})")
+        else:
+            debug_info.append("- **st.secrets available**: No")
+    except Exception as e:
+        debug_info.append(f"- **Error checking secrets**: {str(e)} ({type(e).__name__})")
+    debug_info.append("")
+    
+    # Environment variables check
+    debug_info.append("## Environment Variables Check")
+    env_openai = os.getenv("OPENAI_API_KEY", None)
+    debug_info.append(f"- **OPENAI_API_KEY in env**: {'Yes' if env_openai else 'No'}")
+    if env_openai:
+        debug_info.append(f"- **Env key length**: {len(env_openai)} characters")
+    debug_info.append("")
+    
+    # Test OpenAI connection
+    debug_info.append("## OpenAI Connection Test")
+    if openai_client:
+        try:
+            # Try a simple test call
+            test_response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=5
+            )
+            debug_info.append("- **Test API Call**: ✅ Success")
+            debug_info.append(f"- **Model Response**: {test_response.choices[0].message.content[:50]}")
+        except Exception as e:
+            debug_info.append(f"- **Test API Call**: ❌ Failed")
+            debug_info.append(f"- **Error**: {str(e)}")
+            debug_info.append(f"- **Error Type**: {type(e).__name__}")
+    else:
+        debug_info.append("- **Test API Call**: Skipped (client not initialized)")
+    debug_info.append("")
+    
+    # System info
+    debug_info.append("## System Information")
+    debug_info.append(f"- **Python Version**: {os.sys.version.split()[0]}")
+    debug_info.append(f"- **Streamlit Version**: {st.__version__}")
+    debug_info.append("")
+    
+    # Output as markdown
+    st.markdown("\n".join(debug_info))
+    
+    # Also provide as copyable text
+    st.text_area(
+        "📋 Copy this debug info:",
+        value="\n".join(debug_info),
+        height=400,
+        key="debug_output"
+    )
 
 # Debug section - test API key
 if GEOCODER_API_KEY and "geocode.maps.co" in GEOCODER_URL:
