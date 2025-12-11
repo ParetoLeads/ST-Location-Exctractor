@@ -1475,37 +1475,60 @@ if run_button and uploaded and target_area.strip():
         audit_entry["inside_target"] = inside
         
         # Validate the result makes sense
-        # Check if the result is actually the location we're looking for, not just a street/suburb with a similar name
+        # The result name should match the searched location name closely
         location_lower = extracted_location.lower().strip()
         result_name_lower = geocoded_name.lower()
         
         # Extract the first part of the result name (the actual location name)
         result_first_part = result_name_lower.split(',')[0].strip()
         
-        # Check if result is a street with the location name (false match)
-        # Example: "Adelaide" shouldn't match "Adelaide Street" in Melbourne
-        street_indicators = ['street', 'st', 'road', 'rd', 'avenue', 'ave', 'drive', 'dr', 'lane', 'ln', 'way', 'place', 'pl', 'boulevard', 'blvd', 'crescent', 'cres', 'court', 'ct']
-        is_street_with_location_name = (
-            (result_admin_level == 'street' or any(indicator in result_first_part for indicator in street_indicators)) and
-            location_lower in result_first_part and
-            result_first_part != location_lower  # The result name is longer than what we searched (e.g., "Adelaide Street" vs "Adelaide")
-        )
+        # Normalize both for comparison
+        location_normalized = ' '.join(location_lower.split())
+        result_first_normalized = ' '.join(result_first_part.split())
         
-        # Check if result city doesn't match target city (different city entirely)
+        # Check if the result's first part matches the searched location name
+        exact_match = result_first_normalized == location_normalized
+        starts_with_exact = result_first_normalized.startswith(location_normalized + ' ') or result_first_normalized.startswith(location_normalized + ',')
+        
+        # Check for indicators that suggest this is NOT the actual location
+        false_match_indicators = ['street', 'st', 'road', 'rd', 'avenue', 'ave', 'drive', 'dr', 'lane', 'ln', 'way', 'place', 'pl', 'boulevard', 'blvd', 'crescent', 'cres', 'court', 'ct', 'reserve', 'creek', 'bridge', 'institute', 'school', 'hospital', 'university', 'w e', 'w.', 'e ']
+        has_false_match_indicator = any(indicator in result_first_normalized for indicator in false_match_indicators)
+        
+        # Check if result city doesn't match target city
         city_mismatch = result_city and target_city and result_city != target_city
         
-        # Determine status
+        # Determine if this is a false match
+        is_false_match = False
+        false_match_reason = None
+        
         if city_mismatch:
-            # Result is in a different city - exclude
+            is_false_match = True
+            false_match_reason = f"Result city '{result_city}' doesn't match target city '{target_city}'"
+        elif not exact_match and not starts_with_exact:
+            # Result name doesn't match exactly or start with location name
+            if location_normalized in result_first_normalized:
+                # Location name is contained in result, but result is different
+                if has_false_match_indicator:
+                    is_false_match = True
+                    false_match_reason = f"Result '{result_first_part}' contains location name but appears to be a place/street with similar name, not the actual location"
+                elif len(result_first_normalized) > len(location_normalized) + 5:
+                    # Result is significantly longer (e.g., "W E Newton Reserve" vs "Newton")
+                    is_false_match = True
+                    false_match_reason = f"Result '{result_first_part}' is significantly different from searched location '{extracted_location}' (likely false match)"
+            else:
+                # Location name is not contained in result - definitely false match
+                is_false_match = True
+                false_match_reason = f"Result '{result_first_part}' doesn't match searched location '{extracted_location}'"
+        elif has_false_match_indicator and not exact_match:
+            # Has false match indicator and not exact match (e.g., "Adelaide Street" vs "Adelaide")
+            is_false_match = True
+            false_match_reason = f"Result '{result_first_part}' appears to be a street/place with similar name, not the actual location"
+        
+        # Determine status
+        if is_false_match:
             status = "exclude"
             audit_entry["status"] = "exclude"
-            audit_entry["reasoning"].append(f"Geocoded location is in '{result_city}' but target is '{target_city}' - excluding")
-        elif is_street_with_location_name and inside is True:
-            # Found a street with the location name inside target - likely false match, exclude
-            # This catches "Adelaide Street" when searching for "Adelaide" in Melbourne
-            status = "exclude"
-            audit_entry["status"] = "exclude"
-            audit_entry["reasoning"].append(f"Geocoded location appears to be a street/suburb ('{result_first_part}') with similar name to searched location '{extracted_location}', not the actual location - excluding")
+            audit_entry["reasoning"].append(false_match_reason)
         elif inside is True:
             status = "keep"
             audit_entry["status"] = "keep"
