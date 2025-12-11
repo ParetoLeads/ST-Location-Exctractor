@@ -343,9 +343,9 @@ def _locations_match(result_components: Dict[str, str], target_components: Dict[
 
 def _build_contextualized_query(location: str, target_components: Dict[str, str], target_display_name: str) -> List[str]:
     """
-    Build geocoding queries. Always tries location WITHOUT target context first,
-    then adds context if needed. This prevents matching streets/suburbs in the
-    target area when the location name refers to a different city/area.
+    Build geocoding queries. ALWAYS appends target area context to the location.
+    This ensures locations are searched within the target area first.
+    Example: "Newton" + target "Adelaide, Australia" -> "Newton, Adelaide, Australia"
     """
     if not location:
         return []
@@ -362,7 +362,7 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     has_state = state and state in location_lower
     has_country = country and country in location_lower
     
-    # If location already has city AND (state OR country), it's contextualized
+    # If location already has city AND (state OR country), it's already contextualized
     if has_city and (has_state or has_country):
         queries.append(location)
         return queries
@@ -371,32 +371,31 @@ def _build_contextualized_query(location: str, target_components: Dict[str, str]
     state_val = target_components.get('state', '')
     country_val = target_components.get('country', '')
     
-    # Strategy: Always try WITHOUT target context first to get the actual location
-    # Then add context only if needed for disambiguation
+    # Strategy: ALWAYS append target area context first
+    # This ensures we search for the location within the target area
     
-    # Query 1: Just location (gets the actual location, not a street/suburb in target area)
-    queries.append(location)
-    
-    # Query 2: Location + Country (helps disambiguate if multiple cities with same name)
-    if country_val:
-        queries.append(f"{location}, {country_val}")
-    
-    # Query 3: Location + State + Country (further disambiguation)
-    if state_val and country_val:
-        queries.append(f"{location}, {state_val}, {country_val}")
-    
-    # Only add target area context if we need it (for suburbs/neighborhoods)
-    # Query 4: Full target context
+    # Query 1: Location + Full target display name (most specific)
     if target_display_name:
         queries.append(f"{location}, {target_display_name}")
     
-    # Query 5: City + State + Country context
+    # Query 2: Location + City + State + Country (if we have all components)
     if city_val and state_val and country_val:
         queries.append(f"{location}, {city_val}, {state_val}, {country_val}")
     
-    # Query 6: City + Country context
+    # Query 3: Location + City + Country
     if city_val and country_val:
         queries.append(f"{location}, {city_val}, {country_val}")
+    
+    # Query 4: Location + State + Country (if no city but have state)
+    if state_val and country_val and not city_val:
+        queries.append(f"{location}, {state_val}, {country_val}")
+    
+    # Query 5: Location + Country (broader search)
+    if country_val:
+        queries.append(f"{location}, {country_val}")
+    
+    # Query 6: Just location (fallback if all contextualized queries fail)
+    queries.append(location)
     
     # Remove duplicates while preserving order
     seen = set()
@@ -901,7 +900,7 @@ st.markdown("""
 st.markdown("### Target Area")
 target_area = st.text_input(
     "Target area (city/region/country)",
-    value="Melbourne, Australia",
+    value="City, Country",
     help="Enter the target area you want to filter locations for (e.g., 'Adelaide, Australia')"
 )
 
@@ -1438,6 +1437,7 @@ if run_button and uploaded and target_area.strip():
         status_text.text(f"Geocoding location {idx + 1}/{total_locations}: {extracted_location} | Matched: {geocoded_count} | Unmatched: {unmatched_count}")
         
         # Try queries in order until we get a valid result
+        # Since queries are ordered with target context first, use the first successful result
         result = None
         error_messages = []
         successful_query = None
@@ -1451,53 +1451,18 @@ if run_button and uploaded and target_area.strip():
                 time.sleep(throttle)
             
             if candidate_result is not None:
-                # Get administrative level and location components
+                # Get administrative level and location components for validation
                 admin_level = _get_result_administrative_level(candidate_result)
                 components = _extract_result_location_components(candidate_result)
                 
-                # If this is a high-level administrative area (country/state/city) from a query WITHOUT target context
-                # (first 3 queries), validate it matches the target area
-                if admin_level in ['country', 'state', 'city'] and query_idx < 3:
-                    # Check if this location matches the target area
-                    if not _locations_match(components, target_components):
-                        # This is a different city/state - this is the correct result, use it
-                        result = candidate_result
-                        successful_query = query
-                        result_admin_level = admin_level
-                        result_components = components
-                        audit_entry["successful_query"] = query
-                        audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location that doesn't match target area)")
-                        break
-                    else:
-                        # Matches target area, use it
-                        result = candidate_result
-                        successful_query = query
-                        result_admin_level = admin_level
-                        result_components = components
-                        audit_entry["successful_query"] = query
-                        audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location)")
-                        break
-                elif admin_level in ['country', 'state', 'city']:
-                    # High-level result from contextualized query - validate it
-                    if _locations_match(components, target_components):
-                        # Matches target, use it
-                        result = candidate_result
-                        successful_query = query
-                        result_admin_level = admin_level
-                        result_components = components
-                        audit_entry["successful_query"] = query
-                        audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location matching target)")
-                        break
-                    # If it doesn't match, continue to next query (might be a street/suburb with same name)
-                else:
-                    # Lower-level result (suburb/street) - use it
-                    result = candidate_result
-                    successful_query = query
-                    result_admin_level = admin_level
-                    result_components = components
-                    audit_entry["successful_query"] = query
-                    audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location)")
-                    break
+                # Use the first successful result (queries are ordered with target context first)
+                result = candidate_result
+                successful_query = query
+                result_admin_level = admin_level
+                result_components = components
+                audit_entry["successful_query"] = query
+                audit_entry["reasoning"].append(f"Query {query_idx + 1} succeeded: '{query}' (found {admin_level} level location)")
+                break
             else:
                 error_msg = error or "No results returned"
                 error_messages.append(f"Query {query_idx + 1} ('{query}'): {error_msg}")
@@ -1535,15 +1500,21 @@ if run_button and uploaded and target_area.strip():
         }
         audit_entry["inside_target"] = inside
         
-        # Determine status based on administrative level and location matching
+        # Determine status based on geometry check
+        # Since we always query with target context first, the result should be in/near the target area
+        # However, for high-level administrative areas (country/state/city), we also validate location components
+        # to catch edge cases where a major city name matches a street/suburb in the target area
+        
         if result_admin_level in ['country', 'state', 'city']:
-            # For high-level administrative areas, check if location components match target
+            # For high-level administrative areas, validate location components match target
+            # This catches cases where "Adelaide" (city) might match "Adelaide Street" in target area
             if not _locations_match(result_components, target_components):
                 # Different city/state - exclude even if geometry says inside
-                # (handles cases like "Adelaide" matching "Adelaide Street" in Melbourne)
                 status = "exclude"
                 audit_entry["status"] = "exclude"
-                audit_entry["reasoning"].append(f"{result_admin_level.capitalize()} level location doesn't match target area - excluding (result: {result_components.get('city') or result_components.get('state')}, target: {target_components.get('city') or target_components.get('state')})")
+                result_loc = result_components.get('city') or result_components.get('state') or 'unknown'
+                target_loc = target_components.get('city') or target_components.get('state') or 'unknown'
+                audit_entry["reasoning"].append(f"{result_admin_level.capitalize()} level location doesn't match target area - excluding (result: {result_loc}, target: {target_loc})")
             elif inside is True:
                 status = "keep"
                 audit_entry["status"] = "keep"
@@ -1558,6 +1529,7 @@ if run_button and uploaded and target_area.strip():
                 audit_entry["reasoning"].append(f"Could not determine if {result_admin_level} level location is inside/outside target area")
         else:
             # For lower-level locations (suburbs, streets), use geometry check
+            # Since we queried with target context, these should be in the target area
             if inside is True:
                 status = "keep"
                 audit_entry["status"] = "keep"
