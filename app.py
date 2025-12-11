@@ -29,7 +29,7 @@ _raw_key = os.getenv("GEOCODER_API_KEY", "")
 GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
 
 USER_AGENT = "location-filter-app/1.0"
-APP_VERSION = "v1.15"
+APP_VERSION = "v1.16"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -86,18 +86,19 @@ else:
 st.markdown("""
 <style>
     .main-headline {
-        font-size: 3.5rem;
-        font-weight: 700;
-        color: #1a1a1a;
-        margin-bottom: 0.5rem;
+        font-size: 4rem;
+        font-weight: 800;
+        color: #000;
+        margin-bottom: 1rem;
         text-align: center;
-        margin-top: 2rem;
+        margin-top: 1rem;
+        line-height: 1.2;
     }
     .subheadline {
-        font-size: 1.5rem;
-        color: #333;
+        font-size: 1.75rem;
+        color: #555;
         text-align: center;
-        margin-bottom: 1rem;
+        margin-bottom: 1.5rem;
         font-weight: 500;
         line-height: 1.6;
     }
@@ -105,10 +106,10 @@ st.markdown("""
         font-size: 0.875rem;
         color: #888;
         text-align: center;
-        margin-top: 1rem;
-        margin-bottom: 3rem;
-        padding-bottom: 2rem;
-        border-bottom: 1px solid #e0e0e0;
+        margin-top: 1.5rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 1px solid #e5e5e5;
     }
     .dev-info a {
         color: #ff6603;
@@ -632,9 +633,9 @@ st.markdown("""
 <style>
     /* Upload area styling - large rectangular area */
     [data-testid="stFileUploader"] {
-        border: 2px dashed #d0d0d0;
+        border: 2px solid #e0e0e0;
         border-radius: 12px;
-        background-color: #fafafa;
+        background-color: #ffffff;
         min-height: 280px !important;
         padding: 60px 40px !important;
         transition: all 0.3s ease;
@@ -662,10 +663,12 @@ st.markdown("""
         border-radius: 8px;
         border: 2px solid #e0e0e0;
         transition: border-color 0.3s ease;
+        background-color: #ffffff;
     }
     .stTextInput > div > div > input:focus {
         border-color: #ff6603;
         outline: none;
+        box-shadow: 0 0 0 3px rgba(255, 102, 3, 0.1);
     }
     
     /* CTA Button styling - ParetoLeads orange */
@@ -673,7 +676,7 @@ st.markdown("""
         background-color: #ff6603 !important;
         color: white !important;
         font-size: 18px !important;
-        font-weight: 600 !important;
+        font-weight: 700 !important;
         padding: 18px 40px !important;
         border-radius: 8px;
         border: none;
@@ -693,36 +696,36 @@ st.markdown("""
     
     /* Section spacing */
     .main-container {
-        max-width: 900px;
+        max-width: 1000px;
         margin: 0 auto;
-        padding: 0 20px;
+        padding: 0 40px;
     }
     
     /* Input labels - bigger and brighter */
     .input-label {
-        font-size: 20px;
-        font-weight: 600;
-        color: #1a1a1a;
-        margin-bottom: 4px;
+        font-size: 22px;
+        font-weight: 700;
+        color: #000;
+        margin-bottom: 6px;
         display: block;
     }
     
     /* Reduce gap between label and widget */
     .stFileUploader {
-        margin-top: 4px !important;
+        margin-top: 6px !important;
     }
     .stTextInput {
-        margin-top: 4px !important;
+        margin-top: 6px !important;
     }
     
     /* Remove default Streamlit spacing */
     .element-container {
-        margin-bottom: 2rem;
+        margin-bottom: 2.5rem;
     }
     
     /* Add bigger gap before CTA button */
     .cta-spacing {
-        margin-top: 3rem;
+        margin-top: 2.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
