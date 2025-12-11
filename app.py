@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
@@ -10,7 +11,9 @@ import shapely.wkt
 import streamlit as st
 
 
-NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+# You can override the geocoder endpoint if the default is blocked on your host.
+GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/search")
+GEOCODER_API_KEY = os.getenv("GEOCODER_API_KEY")  # e.g., for https://geocode.maps.co
 USER_AGENT = "location-filter-app/1.0"
 
 
@@ -61,15 +64,30 @@ def geocode(query: str, polygon: bool = False) -> Optional[Dict]:
     }
     if polygon:
         params["polygon_geojson"] = 1
+    if GEOCODER_API_KEY:
+        params["api_key"] = GEOCODER_API_KEY
 
     headers = {"User-Agent": USER_AGENT}
-    resp = requests.get(NOMINATIM_URL, params=params, headers=headers, timeout=10)
-    if resp.status_code != 200:
-        return None
-    data = resp.json()
-    if not data:
-        return None
-    return data[0]
+
+    for attempt in range(3):
+        try:
+            resp = requests.get(
+                GEOCODER_URL,
+                params=params,
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                time.sleep(0.5)
+                continue
+            data = resp.json()
+            if not data:
+                return None
+            return data[0]
+        except requests.RequestException:
+            time.sleep(0.5)
+            continue
+    return None
 
 
 def bbox_to_polygon(bbox: List[str]) -> Optional[geom.Polygon]:
@@ -193,6 +211,7 @@ if uploaded and target_area.strip():
         for w in target_warnings:
             st.warning(w)
     if target_geom is None:
+        st.error("Could not geocode the target area. Try a more specific name.")
         st.stop()
 
     st.success(f"Target area matched: {target_result.get('display_name')}")
