@@ -21,7 +21,7 @@ except Exception as e:
     OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
-APP_VERSION = "v1.13"
+APP_VERSION = "v1.14"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -516,6 +516,10 @@ st.markdown("""
         padding: 40px 20px !important;
         transition: all 0.3s ease !important;
         box-sizing: border-box !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
     
     /* Hover state */
@@ -532,46 +536,36 @@ st.markdown("""
         border-color: #1f77b4 !important;
     }
     
-    /* Make sure the inner content area is properly sized and positioned */
-    section[data-testid="stFileUploaderDropzone"] {
+    /* Instructions container - center content vertically */
+    div[data-testid="stFileUploaderDropzoneInstructions"] {
         display: flex !important;
         flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
+    }
+    
+    /* The inner text container */
+    div[data-testid="stFileUploaderDropzoneInstructions"] > div {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        gap: 8px !important;
+    }
+    
+    /* Hide the button span at the bottom - we'll show it via JS repositioning */
+    section[data-testid="stFileUploaderDropzone"] > span:last-child {
+        position: absolute !important;
+        bottom: 50% !important;
+        transform: translateY(80px) !important;
+    }
+    
+    /* When button is moved inside instructions, style it properly */
+    div[data-testid="stFileUploaderDropzoneInstructions"] .browse-btn-moved {
+        margin-top: 12px !important;
         position: relative !important;
-    }
-    
-    section[data-testid="stFileUploaderDropzone"] > div {
-        height: 100% !important;
-        min-height: 370px !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        flex: 1 !important;
-    }
-    
-    /* Style the file type message - update text in the span */
-    div[data-testid="stFileUploaderDropzoneInstructions"] .st-emotion-cache-1sct1q3 {
-        display: block !important;
-        margin-top: 5px !important;
-        margin-bottom: 8px !important;
-        font-size: 0.875rem !important;
-        color: #666 !important;
-    }
-    
-    /* Style the text container to be a flex column */
-    div[data-testid="stFileUploaderDropzoneInstructions"] .st-emotion-cache-kt79cc {
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-    }
-    
-    /* Style button span when it's inside the text container */
-    div[data-testid="stFileUploaderDropzoneInstructions"] .st-emotion-cache-kt79cc .st-emotion-cache-epvm6 {
-        display: flex !important;
-        justify-content: center !important;
-        align-items: center !important;
-        margin-top: 5px !important;
-        width: 100% !important;
+        bottom: auto !important;
+        transform: none !important;
     }
     
     .stTextInput > div > div > input {
@@ -603,14 +597,46 @@ st.markdown("""
     }
 </style>
 <script>
-    // Enhanced drag-over handler targeting the correct element
+    // Customize file uploader text and button position
+    function customizeFileUploader() {
+        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
+        const instructionsDiv = document.querySelector('div[data-testid="stFileUploaderDropzoneInstructions"]');
+        
+        if (!dropZone || !instructionsDiv) return;
+        
+        // Find and update the file type message (the second span in the text container)
+        const allSpans = instructionsDiv.querySelectorAll('span');
+        allSpans.forEach(span => {
+            const text = span.textContent || span.innerText;
+            if (text && (text.includes('Limit') || text.includes('200MB') || text.includes('per file'))) {
+                span.textContent = 'Supported Files: CSV, XLSX';
+            }
+        });
+        
+        // Find the button span (it's a direct child of the section, not inside instructions)
+        const buttonSpan = dropZone.querySelector(':scope > span:last-child');
+        if (buttonSpan && buttonSpan.querySelector('button')) {
+            // Check if we already moved it
+            if (!buttonSpan.classList.contains('browse-btn-moved')) {
+                buttonSpan.classList.add('browse-btn-moved');
+                // Move the button span inside the instructions div
+                const textContainer = instructionsDiv.querySelector('div');
+                if (textContainer) {
+                    textContainer.appendChild(buttonSpan);
+                } else {
+                    instructionsDiv.appendChild(buttonSpan);
+                }
+            }
+        }
+    }
+    
+    // Enhanced drag-over handler
     function setupDragOver() {
         const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
         
         if (dropZone && !dropZone.hasAttribute('data-drag-setup')) {
             dropZone.setAttribute('data-drag-setup', 'true');
             
-            // Prevent default drag behaviors
             ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
                 dropZone.addEventListener(eventName, function(e) {
                     e.preventDefault();
@@ -618,14 +644,12 @@ st.markdown("""
                 }, false);
             });
             
-            // Add drag-over class on dragenter/dragover
             ['dragenter', 'dragover'].forEach(eventName => {
                 dropZone.addEventListener(eventName, function(e) {
                     this.classList.add('drag-over');
                 }, false);
             });
             
-            // Remove drag-over class on dragleave/drop
             ['dragleave', 'drop'].forEach(eventName => {
                 dropZone.addEventListener(eventName, function(e) {
                     this.classList.remove('drag-over');
@@ -634,16 +658,22 @@ st.markdown("""
         }
     }
     
+    // Run all customizations
+    function runCustomizations() {
+        customizeFileUploader();
+        setupDragOver();
+    }
+    
     // Run immediately and on various events
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', setupDragOver);
+        document.addEventListener('DOMContentLoaded', runCustomizations);
     } else {
-        setupDragOver();
+        runCustomizations();
     }
     
     // Watch for Streamlit re-renders
     const observer = new MutationObserver(function(mutations) {
-        setupDragOver();
+        runCustomizations();
     });
     
     observer.observe(document.body, {
@@ -652,7 +682,7 @@ st.markdown("""
     });
     
     // Also use interval as backup
-    setInterval(setupDragOver, 500);
+    setInterval(runCustomizations, 300);
 </script>
 """, unsafe_allow_html=True)
 
@@ -677,71 +707,49 @@ st.markdown("""
         background-color: rgba(31, 119, 180, 0.15) !important;
         box-shadow: 0 0 20px rgba(31, 119, 180, 0.3) !important;
     }
-    
-    /* Customize file type message */
-    section[data-testid="stFileUploaderDropzone"] p[data-testid="stMarkdownContainer"] small {
-        font-size: 0.875rem !important;
-        color: #666 !important;
-    }
 </style>
 <script>
-    // Force resize using JavaScript as backup - target the correct element
-    function forceResizeUploader() {
-        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
-        if (dropZone) {
-            // Set height directly via JavaScript
-            dropZone.style.height = '450px';
-            dropZone.style.minHeight = '450px';
-        }
-    }
-    
-    // Customize file type message and move button
-    function customizeFileTypeMessage() {
+    // Ensure customizations are applied after file uploader renders
+    function applyUploaderCustomizations() {
         const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
         const instructionsDiv = document.querySelector('div[data-testid="stFileUploaderDropzoneInstructions"]');
         
-        if (instructionsDiv && dropZone) {
-            // Find and update the file type message span
-            const fileTypeSpan = instructionsDiv.querySelector('.st-emotion-cache-1sct1q3');
-            if (fileTypeSpan) {
-                const text = fileTypeSpan.textContent || fileTypeSpan.innerText;
-                // Only change if it still contains the original text
-                if (text.includes('Limit') || text.includes('200MB')) {
-                    fileTypeSpan.textContent = 'Supported Files: CSV, XLSX';
-                }
+        if (!dropZone || !instructionsDiv) return;
+        
+        // Force height
+        dropZone.style.height = '450px';
+        dropZone.style.minHeight = '450px';
+        
+        // Update file type message text - find spans and update
+        const allSpans = instructionsDiv.querySelectorAll('span');
+        allSpans.forEach(span => {
+            const text = span.textContent || span.innerText;
+            if (text && (text.includes('Limit') || text.includes('200MB') || text.includes('per file'))) {
+                span.textContent = 'Supported Files: CSV, XLSX';
             }
-            
-            // Find the button span by its class and move it inside the instructions div
-            const buttonSpan = dropZone.querySelector('span.st-emotion-cache-epvm6');
-            if (buttonSpan && !instructionsDiv.contains(buttonSpan)) {
-                // Get the text container inside instructions div
-                const textContainer = instructionsDiv.querySelector('.st-emotion-cache-kt79cc');
-                
-                if (textContainer) {
-                    // Move the button span into the text container (after the file type message)
-                    textContainer.appendChild(buttonSpan);
-                }
+        });
+        
+        // Move button into the instructions area
+        const buttonSpan = dropZone.querySelector(':scope > span:last-child');
+        if (buttonSpan && buttonSpan.querySelector('button') && !buttonSpan.classList.contains('browse-btn-moved')) {
+            buttonSpan.classList.add('browse-btn-moved');
+            buttonSpan.style.position = 'relative';
+            buttonSpan.style.marginTop = '12px';
+            const textContainer = instructionsDiv.querySelector('div');
+            if (textContainer) {
+                textContainer.appendChild(buttonSpan);
+            } else {
+                instructionsDiv.appendChild(buttonSpan);
             }
         }
     }
     
-    // Run immediately and repeatedly
-    forceResizeUploader();
-    customizeFileTypeMessage();
-    setInterval(function() {
-        forceResizeUploader();
-        customizeFileTypeMessage();
-    }, 300);
-    
-    // Also run after a delay to catch late renders
-    setTimeout(function() {
-        forceResizeUploader();
-        customizeFileTypeMessage();
-    }, 1000);
-    setTimeout(function() {
-        forceResizeUploader();
-        customizeFileTypeMessage();
-    }, 2000);
+    // Run repeatedly to catch re-renders
+    applyUploaderCustomizations();
+    setInterval(applyUploaderCustomizations, 300);
+    setTimeout(applyUploaderCustomizations, 500);
+    setTimeout(applyUploaderCustomizations, 1000);
+    setTimeout(applyUploaderCustomizations, 2000);
 </script>
 """, unsafe_allow_html=True)
 
