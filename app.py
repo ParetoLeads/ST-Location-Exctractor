@@ -223,6 +223,100 @@ def _check_location_inside_target_with_llm(final_location: str, target_area: str
         return False, f"LLM error: {str(e)}"
 
 
+@lru_cache(maxsize=1)
+def _infer_industry_from_search_terms(search_terms_tuple: tuple) -> str:
+    """
+    Use LLM to infer the industry/business type from a sample of search terms.
+    Returns a string describing the industry (e.g., "locksmith services", "plumbing", "restaurants").
+    """
+    if not openai_client:
+        return "general business"
+    
+    if not search_terms_tuple or len(search_terms_tuple) == 0:
+        return "general business"
+    
+    # Convert tuple back to list and take a sample (max 20 terms for efficiency)
+    search_terms = list(search_terms_tuple)[:20]
+    terms_text = "\n".join(f"- {term}" for term in search_terms)
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a business analyst. Analyze search terms to infer the industry or business type. Return ONLY a brief industry description (e.g., 'locksmith services', 'plumbing', 'restaurants', 'real estate'). Keep it to 1-3 words."
+                },
+                {
+                    "role": "user",
+                    "content": f"Analyze these search terms and infer the industry/business type:\n\n{terms_text}\n\nReturn ONLY the industry name (1-3 words)."
+                }
+            ],
+            temperature=0.1,
+            max_tokens=30,
+        )
+        
+        industry = response.choices[0].message.content.strip()
+        # Clean up the response
+        industry = industry.strip('"').strip("'").strip()
+        return industry if industry else "general business"
+        
+    except Exception as e:
+        # If LLM fails, return default
+        return "general business"
+
+
+@lru_cache(maxsize=500)
+def _identify_competitor_with_llm(search_term: str, industry: str) -> Optional[str]:
+    """
+    Use LLM to identify if a search term contains a competitor name.
+    Returns the competitor name if found, None otherwise.
+    
+    Example:
+    - search_term: "abc locksmith"
+    - industry: "locksmith services"
+    - Returns: "ABC Locksmith" or None
+    """
+    if not openai_client:
+        return None
+    
+    if not search_term or not isinstance(search_term, str) or not search_term.strip():
+        return None
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a business intelligence expert. Analyze search terms to identify competitor business names. A competitor name is a specific business/brand name (e.g., 'ABC Locksmith', 'QuickKey Services', 'Joe's Plumbing'). Generic terms like 'locksmith near me', 'plumber', 'best restaurant' are NOT competitor names. Return ONLY the competitor name if found, or 'NONE' if no competitor name is present."
+                },
+                {
+                    "role": "user",
+                    "content": f"Industry: {industry}\nSearch term: '{search_term}'\n\nDoes this search term contain a competitor business name? If yes, return ONLY the competitor name. If no, return 'NONE'."
+                }
+            ],
+            temperature=0.1,
+            max_tokens=50,
+        )
+        
+        result = response.choices[0].message.content.strip()
+        result = result.strip('"').strip("'").strip()
+        
+        # Handle "NONE" or empty responses
+        if not result or result.upper() == "NONE" or len(result) < 2:
+            return None
+        
+        # Capitalize properly (first letter of each word)
+        competitor_name = ' '.join(word.capitalize() for word in result.split())
+        
+        return competitor_name
+        
+    except Exception as e:
+        # If LLM fails, return None
+        return None
+
+
 def _extract_location_components(display_name: str) -> Dict[str, str]:
     """
     Extract key location components (city, state, country) from a geocoded display name.
@@ -549,12 +643,16 @@ def _remove_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def _extract_locations_from_search_terms(df: pd.DataFrame) -> pd.DataFrame:
+def _extract_locations_from_search_terms(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Extract location names from search terms and create a new dataframe.
-    Only includes rows where a location was successfully extracted.
+    Extract location names from search terms and create two dataframes:
+    1. Terms with locations (aggregated by location)
+    2. Terms without locations (for competitor detection)
+    
+    Returns: (df_with_locations, df_without_locations)
     """
-    results = []
+    results_with_location = []
+    results_without_location = []
     
     for _, row in df.iterrows():
         search_term = row["search_term"]
@@ -563,25 +661,38 @@ def _extract_locations_from_search_terms(df: pd.DataFrame) -> pd.DataFrame:
         extracted_location = _extract_location_from_search_term(search_term)
         
         if extracted_location:
-            results.append({
+            results_with_location.append({
                 "original_search_term": search_term,
                 "extracted_location": extracted_location,
                 "impressions": impressions,
             })
+        else:
+            results_without_location.append({
+                "original_search_term": search_term,
+                "impressions": impressions,
+            })
     
-    if not results:
-        return pd.DataFrame(columns=["original_search_term", "extracted_location", "impressions"])
+    # Process terms with locations
+    if not results_with_location:
+        df_with_locations = pd.DataFrame(columns=["original_search_term", "extracted_location", "impressions"])
+    else:
+        result_df = pd.DataFrame(results_with_location)
+        # Aggregate by extracted location (same location might come from different search terms)
+        aggregated = result_df.groupby("extracted_location", as_index=False).agg({
+            "impressions": "sum",
+            "original_search_term": lambda x: ", ".join(x.unique()[:3]) + ("..." if len(x.unique()) > 3 else "")
+        })
+        aggregated = aggregated.sort_values("impressions", ascending=False)
+        df_with_locations = aggregated.reset_index(drop=True)
     
-    result_df = pd.DataFrame(results)
+    # Process terms without locations
+    if not results_without_location:
+        df_without_locations = pd.DataFrame(columns=["original_search_term", "impressions"])
+    else:
+        df_without_locations = pd.DataFrame(results_without_location)
+        df_without_locations = df_without_locations.sort_values("impressions", ascending=False).reset_index(drop=True)
     
-    # Aggregate by extracted location (same location might come from different search terms)
-    aggregated = result_df.groupby("extracted_location", as_index=False).agg({
-        "impressions": "sum",
-        "original_search_term": lambda x: ", ".join(x.unique()[:3]) + ("..." if len(x.unique()) > 3 else "")
-    })
-    
-    aggregated = aggregated.sort_values("impressions", ascending=False)
-    return aggregated.reset_index(drop=True)
+    return df_with_locations, df_without_locations
 
 
 @lru_cache(maxsize=512)
@@ -1382,18 +1493,18 @@ if run_button and uploaded and target_area.strip():
     progress_bar.progress(0.40)
     status_text.text(f"Removed summary rows: {len(df_aggregated)} search terms remaining")
 
-    # Step 3: Extract locations from search terms (40-60%)
+    # Step 3: Extract locations from search terms (40-50%)
     progress_bar.progress(0.45)
     if openai_client:
         status_text.text("Using AI to extract location names from search terms...")
     else:
         status_text.text("Extracting location names from search terms...")
     
-    df_locations = _extract_locations_from_search_terms(df_aggregated)
+    df_locations, df_without_locations = _extract_locations_from_search_terms(df_aggregated)
     locations_found = len(df_locations)
-    terms_without_locations = len(df_aggregated) - len(df_locations)
+    terms_without_locations_count = len(df_without_locations)
     
-    progress_bar.progress(0.60)
+    progress_bar.progress(0.50)
     if locations_found > 0:
         status_text.text(f"Extracted {locations_found} unique locations from {len(df_aggregated)} search terms")
     else:
@@ -1402,8 +1513,8 @@ if run_button and uploaded and target_area.strip():
         st.warning(f"⚠️ No locations could be extracted from search terms. Check if search terms contain location names.")
         st.stop()
 
-    # Step 4: Validate locations using LLM (60-100%)
-    progress_bar.progress(0.65)
+    # Step 4: Validate locations using LLM (50-80%)
+    progress_bar.progress(0.55)
     status_text.text(f"Validating {locations_found} locations using AI...")
     
     if not openai_client:
@@ -1438,9 +1549,9 @@ if run_button and uploaded and target_area.strip():
         final_location = f"{extracted_location} {target_area}".strip()
         audit_entry["final_location"] = final_location
         
-        # Update progress (65% to 100%)
+        # Update progress (55% to 80%)
         location_progress = (idx + 1) / total_locations
-        overall_progress = 0.65 + (location_progress * 0.35)
+        overall_progress = 0.55 + (location_progress * 0.25)
         progress_bar.progress(overall_progress)
         status_text.text(f"Validating location {idx + 1}/{total_locations}: {extracted_location} | Inside: {validated_count} | Outside: {unmatched_count}")
         
@@ -1477,9 +1588,64 @@ if run_button and uploaded and target_area.strip():
 
     results_df = pd.DataFrame(all_records)
     
+    # Step 5: Detect competitors from terms without locations (80-100%)
+    competitor_records = []
+    if not df_without_locations.empty and openai_client:
+        progress_bar.progress(0.80)
+        status_text.text("Inferring industry from search terms...")
+        
+        # Infer industry from all search terms (sample from aggregated)
+        sample_terms = df_aggregated["search_term"].head(20).tolist()
+        industry = _infer_industry_from_search_terms(tuple(sample_terms))
+        
+        progress_bar.progress(0.85)
+        status_text.text(f"Inferred industry: {industry}. Detecting competitors from {terms_without_locations_count} terms...")
+        
+        total_terms = len(df_without_locations)
+        competitor_count = 0
+        
+        for idx, row in df_without_locations.iterrows():
+            search_term = row["original_search_term"]
+            impressions = row["impressions"]
+            
+            # Update progress (85% to 100%)
+            term_progress = (idx + 1) / total_terms
+            overall_progress = 0.85 + (term_progress * 0.15)
+            progress_bar.progress(overall_progress)
+            status_text.text(f"Analyzing term {idx + 1}/{total_terms} for competitors... | Found: {competitor_count}")
+            
+            # Small delay to avoid rate limiting
+            if throttle:
+                time.sleep(throttle)
+            
+            # Identify competitor
+            competitor_name = _identify_competitor_with_llm(search_term, industry)
+            
+            if competitor_name:
+                competitor_records.append({
+                    "competitor_name": competitor_name,
+                    "original_search_term": search_term,
+                    "impressions": impressions,
+                })
+                competitor_count += 1
+                # Update status with new count
+                status_text.text(f"Analyzing term {idx + 1}/{total_terms} for competitors... | Found: {competitor_count}")
+    
+    competitor_df = pd.DataFrame(competitor_records) if competitor_records else pd.DataFrame(columns=["competitor_name", "original_search_term", "impressions"])
+    
+    # Aggregate competitors by name
+    if not competitor_df.empty:
+        agg_competitors = competitor_df.groupby("competitor_name", as_index=False).agg({
+            "impressions": "sum",
+            "original_search_term": lambda x: ", ".join(x.unique()[:3]) + ("..." if len(x.unique()) > 3 else "")
+        })
+        agg_competitors = agg_competitors.sort_values("impressions", ascending=False).reset_index(drop=True)
+    else:
+        agg_competitors = pd.DataFrame(columns=["competitor_name", "original_search_term", "impressions"])
+    
     # Complete progress
     progress_bar.progress(1.0)
-    status_text.text(f"Complete! Processed {total_locations} locations ({validated_count} inside target, {unmatched_count} outside target)")
+    status_text.text(f"Complete! Processed {total_locations} locations ({validated_count} inside target, {unmatched_count} outside target) | Found {len(agg_competitors)} competitors")
     
     # Clear progress indicators
     progress_bar.empty()
@@ -1527,6 +1693,15 @@ if run_button and uploaded and target_area.strip():
     st.subheader("📋 Detailed results (all locations)")
     st.dataframe(results_df.sort_values("impressions", ascending=False))
     download_link("Download full results", results_df, "results.csv", "full-results")
+
+    # Competitors section
+    st.subheader("🏢 Potential Competitors Detected")
+    if not agg_competitors.empty:
+        st.dataframe(agg_competitors.sort_values("impressions", ascending=False))
+        download_link("Download competitors (aggregated)", agg_competitors, "competitors.csv", "competitors-agg")
+        st.caption(f"Total impressions for competitors: {agg_competitors['impressions'].sum():,.0f}")
+    else:
+        st.info("No competitor names detected in search terms without locations.")
 
     # Comprehensive Audit Log
     st.subheader("📋 Audit Log - Complete Workflow")
