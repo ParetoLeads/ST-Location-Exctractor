@@ -21,7 +21,7 @@ except Exception as e:
     OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
-APP_VERSION = "v1.14"
+APP_VERSION = "v1.13"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -549,32 +549,29 @@ st.markdown("""
         flex: 1 !important;
     }
     
-    /* Style the file type message paragraph - position it right under "Drag and drop file here" */
-    section[data-testid="stFileUploaderDropzone"] > p {
-        margin-bottom: 8px !important;
+    /* Style the file type message - update text in the span */
+    div[data-testid="stFileUploaderDropzoneInstructions"] .st-emotion-cache-1sct1q3 {
+        display: block !important;
         margin-top: 5px !important;
-        padding: 0 !important;
-    }
-    
-    /* Custom file type message styling */
-    section[data-testid="stFileUploaderDropzone"] > p small {
+        margin-bottom: 8px !important;
         font-size: 0.875rem !important;
         color: #666 !important;
     }
     
-    /* Position the Browse files button right under the file type message */
-    section[data-testid="stFileUploaderDropzone"] > span {
+    /* Style the text container to be a flex column */
+    div[data-testid="stFileUploaderDropzoneInstructions"] .st-emotion-cache-kt79cc {
         display: flex !important;
-        justify-content: center !important;
+        flex-direction: column !important;
         align-items: center !important;
-        margin-top: 0 !important;
-        padding-top: 0 !important;
-        padding-bottom: 20px !important;
-        width: 100% !important;
     }
     
-    section[data-testid="stFileUploaderDropzone"] > span > button {
-        margin: 0 auto !important;
+    /* Style button when it's inside the instructions div */
+    div[data-testid="stFileUploaderDropzoneInstructions"] button {
+        margin-top: 5px !important;
+    }
+    
+    div[data-testid="stFileUploaderDropzoneInstructions"] span button {
+        margin-top: 5px !important;
     }
     
     .stTextInput > div > div > input {
@@ -698,21 +695,57 @@ st.markdown("""
         }
     }
     
-    // Customize file type message
+    // Customize file type message and move button
     function customizeFileTypeMessage() {
         const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
-        if (dropZone) {
-            // Find the small text element that contains the file type message
-            const smallElements = dropZone.querySelectorAll('small');
-            smallElements.forEach(function(small) {
-                const text = small.textContent || small.innerText;
-                // Replace the default message with custom one
+        const instructionsDiv = document.querySelector('div[data-testid="stFileUploaderDropzoneInstructions"]');
+        
+        if (instructionsDiv) {
+            // Find and update the file type message span
+            const fileTypeSpan = instructionsDiv.querySelector('.st-emotion-cache-1sct1q3');
+            if (fileTypeSpan) {
+                const text = fileTypeSpan.textContent || fileTypeSpan.innerText;
                 if (text.includes('Limit') || text.includes('CSV') || text.includes('XLSX') || text.includes('200MB')) {
-                    small.textContent = 'Supported Formats: CSV , XLSX';
-                    small.style.color = '#666';
-                    small.style.fontSize = '0.875rem';
+                    fileTypeSpan.textContent = 'Supported Formats: CSV , XLSX';
+                    fileTypeSpan.style.color = '#666';
+                    fileTypeSpan.style.fontSize = '0.875rem';
+                    fileTypeSpan.style.display = 'block';
+                    fileTypeSpan.style.marginTop = '5px';
+                    fileTypeSpan.style.marginBottom = '10px';
                 }
-            });
+            }
+            
+            // Move the browse files button inside the instructions div
+            if (dropZone && instructionsDiv) {
+                // Find the button span (sibling to instructions div)
+                const allSpans = Array.from(dropZone.children).filter(el => el.tagName === 'SPAN');
+                let buttonSpan = null;
+                let button = null;
+                
+                for (let span of allSpans) {
+                    const btn = span.querySelector('button');
+                    if (btn && span !== instructionsDiv && !instructionsDiv.contains(span)) {
+                        buttonSpan = span;
+                        button = btn;
+                        break;
+                    }
+                }
+                
+                // Check if button is already moved
+                const existingButton = instructionsDiv.querySelector('button');
+                if (button && !existingButton && buttonSpan) {
+                    // Get the text container inside instructions div
+                    const textContainer = instructionsDiv.querySelector('.st-emotion-cache-kt79cc');
+                    
+                    if (textContainer) {
+                        // Move the button span into the text container
+                        textContainer.appendChild(buttonSpan);
+                        
+                        // Style the button span
+                        buttonSpan.style.cssText = 'display: flex; justify-content: center; align-items: center; margin-top: 5px; width: 100%;';
+                    }
+                }
+            }
         }
     }
     
