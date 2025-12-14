@@ -5,8 +5,6 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-import requests
-import shapely.geometry as geom
 import streamlit as st
 
 try:
@@ -23,12 +21,6 @@ except Exception as e:
     OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
-# You can override the geocoder endpoint if the default is blocked on your host.
-GEOCODER_URL = os.getenv("GEOCODER_URL", "https://nominatim.openstreetmap.org/search")
-_raw_key = os.getenv("GEOCODER_API_KEY", "")
-GEOCODER_API_KEY = _raw_key.strip() if _raw_key else None  # e.g., for https://geocode.maps.co
-
-USER_AGENT = "location-filter-app/1.0"
 APP_VERSION = "v1.13"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
@@ -317,260 +309,62 @@ def _identify_competitor_with_llm(search_term: str, industry: str) -> Optional[s
         return None
 
 
-def _extract_location_components(display_name: str) -> Dict[str, str]:
-    """
-    Extract key location components (city, state, country) from a geocoded display name.
-    Returns a dict with 'city', 'state', 'country' keys.
-    """
-    if not display_name:
-        return {}
-    
-    # Split by comma and clean up
-    parts = [p.strip() for p in display_name.split(',')]
-    
-    components = {}
-    
-    # Typically: "City, State/Province, Country" or "City, Admin Level, State, Country"
-    # Try to identify components intelligently
-    if len(parts) >= 2:
-        # Last part is usually country
-        components['country'] = parts[-1]
-        
-        # First part is usually city
-        components['city'] = parts[0]
-        
-        # Middle parts might be state/province - look for common patterns
-        # Skip admin levels (like "City Council", "County", etc.)
-        admin_keywords = ['council', 'county', 'municipality', 'region', 'district', 'borough', 'city council', 
-                         'local government', 'lga', 'shire', 'town', 'village']
-        state_candidates = []
-        
-        for part in parts[1:-1]:  # Skip first (city) and last (country)
-            part_lower = part.lower()
-            # Skip if it looks like an admin level
-            is_admin = any(keyword in part_lower for keyword in admin_keywords)
-            # Also skip if it's the same as the city name (e.g., "Adelaide, Adelaide City Council")
-            is_duplicate_city = part_lower == parts[0].lower()
-            
-            if not is_admin and not is_duplicate_city:
-                state_candidates.append(part)
-        
-        # Use the first non-admin part as state, or join them (limit to 2 to avoid too verbose)
-        if state_candidates:
-            # Prefer shorter state names (usually states/provinces are 1-3 words)
-            # Sort by length, preferring shorter ones
-            state_candidates.sort(key=lambda x: len(x.split()))
-            components['state'] = state_candidates[0]
-        elif len(parts) >= 3:
-            # Fallback: use second-to-last part as state (might be admin level, but better than nothing)
-            potential_state = parts[-2]
-            # Only use if it doesn't look like an admin level
-            if not any(keyword in potential_state.lower() for keyword in admin_keywords):
-                components['state'] = potential_state
-    
-    return components
-
-
-def _get_result_administrative_level(result: Dict) -> str:
-    """
-    Determine the administrative level of a geocoded result.
-    Returns: 'country', 'state', 'city', 'suburb', 'street', or 'unknown'
-    """
-    if not result:
-        return 'unknown'
-    
-    # Check type/class from geocoder
-    result_type = result.get('type', '').lower()
-    result_class = result.get('class', '').lower()
-    
-    # Map geocoder types to administrative levels
-    if result_type in ['country'] or result_class in ['country']:
-        return 'country'
-    if result_type in ['state', 'province', 'region'] or result_class in ['state', 'province', 'region', 'administrative']:
-        return 'state'
-    if result_type in ['city', 'town'] or result_class in ['city', 'town']:
-        return 'city'
-    
-    # Check address components to infer level
-    address = result.get('address', {})
-    if address:
-        has_country = any(key in address for key in ['country'])
-        has_state = any(key in address for key in ['state', 'region', 'province'])
-        has_city = any(key in address for key in ['city', 'town', 'municipality'])
-        has_suburb = any(key in address for key in ['suburb', 'neighbourhood', 'neighborhood', 'village'])
-        has_street = any(key in address for key in ['road', 'street', 'house_number', 'house', 'building'])
-        
-        if has_street:
-            return 'street'
-        if has_suburb:
-            return 'suburb'
-        if has_city and not has_street:
-            return 'city'
-        if has_state and not has_city and not has_street:
-            return 'state'
-        if has_country and not has_state and not has_city and not has_street:
-            return 'country'
-    
-    return 'unknown'
-
-
-def _extract_result_location_components(result: Dict) -> Dict[str, str]:
-    """
-    Extract city, state, and country from a geocoded result.
-    Returns a dict with 'city', 'state', 'country' keys.
-    """
-    components = {}
-    address = result.get('address', {})
-    
-    if address:
-        # Extract city
-        components['city'] = (
-            address.get('city') or 
-            address.get('town') or 
-            address.get('municipality') or
-            address.get('city_district') or
-            None
-        )
-        
-        # Extract state
-        components['state'] = (
-            address.get('state') or 
-            address.get('region') or 
-            address.get('province') or
-            address.get('state_district') or
-            None
-        )
-        
-        # Extract country
-        components['country'] = address.get('country') or None
-    
-    # Fallback to parsing display_name if address details aren't available
-    if not components.get('city') or not components.get('state'):
-        display_name = result.get('display_name', '')
-        if display_name:
-            parsed = _extract_location_components(display_name)
-            for key in ['city', 'state', 'country']:
-                if not components.get(key) and parsed.get(key):
-                    components[key] = parsed[key]
-    
-    return components
-
-
-def _locations_match(result_components: Dict[str, str], target_components: Dict[str, str]) -> bool:
-    """
-    Check if a result location matches the target location based on city/state/country.
-    Returns True if they appear to be the same location.
-    """
-    result_city = (result_components.get('city') or '').lower().strip()
-    result_state = (result_components.get('state') or '').lower().strip()
-    result_country = (result_components.get('country') or '').lower().strip()
-    
-    target_city = (target_components.get('city') or '').lower().strip()
-    target_state = (target_components.get('state') or '').lower().strip()
-    target_country = (target_components.get('country') or '').lower().strip()
-    
-    # If we have city info for both, they must match
-    if result_city and target_city:
-        if result_city != target_city:
-            return False
-    
-    # If we have state info for both, they must match
-    if result_state and target_state:
-        if result_state != target_state:
-            return False
-    
-    # Country should always match (assuming same country searches)
-    if result_country and target_country:
-        if result_country != target_country:
-            return False
-    
-    return True
-
-
-def _build_contextualized_query(location: str, target_components: Dict[str, str], target_display_name: str) -> List[str]:
-    """
-    Build a single geocoding query: extracted location + target area.
-    
-    Strategy: Use only one query with target context to find the location
-    within the target area. If it doesn't exist there, geocoding will fail
-    or return something outside the target area.
-    
-    Examples:
-    - "Brighton, Melbourne, Australia" -> finds Brighton suburb in Melbourne
-    - "Adelaide, Melbourne, Australia" -> won't find good match or finds outside Melbourne
-    """
-    if not location:
-        return []
-    
-    # Check if location already contains sufficient context
-    location_lower = location.lower()
-    city = target_components.get('city', '').lower()
-    state = target_components.get('state', '').lower()
-    country = target_components.get('country', '').lower()
-    
-    has_city = city and city in location_lower
-    has_state = state and state in location_lower
-    has_country = country and country in location_lower
-    
-    # If location already has city AND (state OR country), it's already contextualized
-    if has_city and (has_state or has_country):
-        return [location]
-    
-    # Single query: Location + Target area (use simple format: City, Country)
-    city_val = target_components.get('city', '')
-    country_val = target_components.get('country', '')
-    
-    # Build simple query: "Location, City, Country"
-    if city_val and country_val:
-        return [f"{location}, {city_val}, {country_val}"]
-    elif country_val:
-        return [f"{location}, {country_val}"]
-    else:
-        # Fallback to original target area input if components not available
-        return [f"{location}, {target_display_name}"] if target_display_name else [location]
-
-
-def _add_target_context(location: str, target_area: str) -> str:
-    """
-    Add target area context to location name for better geocoding accuracy.
-    This is a simple version that returns the most specific query.
-    For fallback logic, use _build_contextualized_query instead.
-    
-    Examples:
-    - "Newton" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia"
-    - "Newton, Australia" + "Melbourne, Victoria, Australia" -> "Newton, Melbourne, Victoria, Australia" (avoid duplicate)
-    """
-    queries = _build_contextualized_query(location, {}, target_area)
-    return queries[0] if queries else location
-
-
 def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
-    """Read CSV file, handling Google Ads format with metadata rows."""
+    """Read CSV or XLSX file, handling Google Ads format with metadata rows."""
+    # Determine file type from extension or content type
+    file_name = ""
+    if hasattr(uploaded_file, 'name'):
+        file_name = uploaded_file.name.lower()
+    elif hasattr(uploaded_file, 'type'):
+        # Check content type as fallback
+        content_type = uploaded_file.type.lower()
+        if 'spreadsheet' in content_type or 'excel' in content_type:
+            file_name = "file.xlsx"
+    
+    is_xlsx = file_name.endswith('.xlsx') or file_name.endswith('.xls')
+    
     # Try reading with skiprows to handle Google Ads format
-    # Google Ads CSVs often have 2 metadata rows before headers
+    # Google Ads files often have 2 metadata rows before headers
     try:
-        # First, try reading normally
-        df = pd.read_csv(uploaded_file)
+        if is_xlsx:
+            # Read Excel file
+            df = pd.read_excel(uploaded_file, engine='openpyxl')
+        else:
+            # Read CSV file
+            df = pd.read_csv(uploaded_file)
         
         # Check if first row looks like metadata (not column headers)
-        first_col = df.columns[0] if len(df.columns) > 0 else ""
-        if isinstance(first_col, str) and ("report" in first_col.lower() or df.iloc[0, 0] == "Search terms report"):
-            # Skip first 2 rows and read again
-            uploaded_file.seek(0)  # Reset file pointer
-            df = pd.read_csv(uploaded_file, skiprows=2)
-    except Exception:
+        if len(df) > 0:
+            first_col = df.columns[0] if len(df.columns) > 0 else ""
+            first_cell_value = str(df.iloc[0, 0]) if len(df) > 0 else ""
+            if isinstance(first_col, str) and ("report" in first_col.lower() or first_cell_value == "Search terms report"):
+                # Skip first 2 rows and read again
+                uploaded_file.seek(0)  # Reset file pointer
+                if is_xlsx:
+                    df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
+                else:
+                    df = pd.read_csv(uploaded_file, skiprows=2)
+    except Exception as e:
         # If that fails, try reading normally
         uploaded_file.seek(0)
-        df = pd.read_csv(uploaded_file)
+        try:
+            if is_xlsx:
+                df = pd.read_excel(uploaded_file, engine='openpyxl')
+            else:
+                df = pd.read_csv(uploaded_file)
+        except Exception as e2:
+            # If both fail, raise a clear error
+            raise ValueError(f"Could not read file. Please ensure it's a valid CSV or XLSX file. Error: {str(e2)}")
     
     # Remove rows that are totals or empty
-    # Check for summary rows that start with "Total:" (with or without colon)
-    first_col_str = df.iloc[:, 0].astype(str).str.strip()
-    is_total_row = first_col_str.str.lower().str.startswith("total")
-    df = df[~is_total_row]
-    
-    # Also remove rows where first column is empty
-    df = df.dropna(subset=[df.columns[0]])
+    if len(df) > 0:
+        # Check for summary rows that start with "Total:" (with or without colon)
+        first_col_str = df.iloc[:, 0].astype(str).str.strip()
+        is_total_row = first_col_str.str.lower().str.startswith("total")
+        df = df[~is_total_row]
+        
+        # Also remove rows where first column is empty
+        df = df.dropna(subset=[df.columns[0]])
     
     return df
 
@@ -695,175 +489,6 @@ def _extract_locations_from_search_terms(df: pd.DataFrame) -> Tuple[pd.DataFrame
     return df_with_locations, df_without_locations
 
 
-@lru_cache(maxsize=512)
-def geocode(query: str, polygon: bool = False) -> Tuple[Optional[Dict], Optional[str]]:
-    # Detect which geocoder API we're using
-    is_maps_co = "geocode.maps.co" in GEOCODER_URL
-    
-    params = {"q": query}
-    
-    if is_maps_co:
-        # geocode.maps.co format - simpler, just needs q and api_key
-        # Note: maps.co doesn't support polygon requests, so ignore polygon param
-        if GEOCODER_API_KEY:
-            # Strip any whitespace that might have been copied
-            clean_key = GEOCODER_API_KEY.strip()
-            params["api_key"] = clean_key
-        else:
-            return None, "API key is required for geocode.maps.co"
-    else:
-        # Nominatim format
-        params.update({
-            "format": "jsonv2",
-            "limit": 1,
-            "addressdetails": 1,
-        })
-        if polygon:
-            params["polygon_geojson"] = 1
-    
-    headers = {"User-Agent": USER_AGENT}
-    last_error = None
-    
-    for attempt in range(3):
-        try:
-            resp = requests.get(
-                GEOCODER_URL,
-                params=params,
-                headers=headers,
-                timeout=10,
-            )
-            if resp.status_code != 200:
-                error_text = resp.text[:300]
-                last_error = f"HTTP {resp.status_code}: {error_text}"
-                # Don't retry on 401 (invalid key) - it won't work
-                if resp.status_code == 401:
-                    break
-                time.sleep(0.5)
-                continue
-            data = resp.json()
-            if not data:
-                last_error = "Empty response"
-                return None, last_error
-            
-            result = data[0]
-            
-            # Normalize response format - maps.co returns lat/lon as strings
-            if is_maps_co:
-                if "lat" in result and isinstance(result["lat"], str):
-                    result["lat"] = float(result["lat"])
-                if "lon" in result and isinstance(result["lon"], str):
-                    result["lon"] = float(result["lon"])
-                # maps.co uses "display_name" or "formatted" for the name
-                if "display_name" not in result and "formatted" in result:
-                    result["display_name"] = result["formatted"]
-            
-            return result, None
-        except requests.RequestException as exc:
-            last_error = str(exc)
-            time.sleep(0.5)
-            continue
-        except (ValueError, KeyError, IndexError) as exc:
-            last_error = f"Parse error: {exc}"
-            time.sleep(0.5)
-            continue
-    
-    return None, last_error
-
-
-def bbox_to_polygon(bbox: List[str]) -> Optional[geom.Polygon]:
-    if not bbox or len(bbox) != 4:
-        return None
-    try:
-        south, north, west, east = map(float, bbox)
-        return geom.Polygon(
-            [
-                (west, south),
-                (east, south),
-                (east, north),
-                (west, north),
-                (west, south),
-            ]
-        )
-    except Exception:
-        return None
-
-
-def location_shape(feature: Dict) -> Optional[geom.base.BaseGeometry]:
-    if feature.get("geojson"):
-        try:
-            return geom.shape(feature["geojson"])
-        except Exception:
-            pass
-    if feature.get("boundingbox"):
-        return bbox_to_polygon(feature["boundingbox"])
-    if feature.get("lat") and feature.get("lon"):
-        return geom.Point(float(feature["lon"]), float(feature["lat"]))
-    return None
-
-
-def is_inside(candidate: Dict, target_geom: geom.base.BaseGeometry) -> Optional[bool]:
-    cand_geom = location_shape(candidate)
-    if cand_geom is None:
-        return None
-    if isinstance(cand_geom, geom.Point):
-        return target_geom.contains(cand_geom)
-    return target_geom.intersects(cand_geom)
-
-
-def extract_locations(df: pd.DataFrame, target_geom: geom.base.BaseGeometry) -> pd.DataFrame:
-    records = []
-    for _, row in df.iterrows():
-        term = row["search_term"]
-        impressions = row["impressions"]
-
-        result, _ = geocode(term, polygon=False)
-        if result is None:
-            records.append(
-                {
-                    "search_term": term,
-                    "impressions": impressions,
-                    "location_name": None,
-                    "lat": None,
-                    "lon": None,
-                    "status": "unmatched",
-                }
-            )
-            continue
-
-        inside = is_inside(result, target_geom)
-        status = "keep" if inside else "exclude" if inside is False else "unmatched"
-
-        records.append(
-            {
-                "search_term": term,
-                "impressions": impressions,
-                "location_name": result.get("display_name", ""),
-                "lat": result.get("lat"),
-                "lon": result.get("lon"),
-                "status": status,
-            }
-        )
-    return pd.DataFrame(records)
-
-
-def geocode_target_area(area_text: str) -> Tuple[Optional[Dict], Optional[geom.base.BaseGeometry], List[str]]:
-    result, err = geocode(area_text, polygon=True)
-    if not result:
-        error_msg = f"No match found for '{area_text}'."
-        if err:
-            error_msg += f" {err}"
-            # Add helpful hint for 401 errors
-            if "401" in err or "Invalid API Key" in err:
-                error_msg += " Please check your API key in Streamlit Secrets (Settings → Secrets). Make sure there are no extra spaces."
-        return None, None, [error_msg]
-
-    shape = location_shape(result)
-    warnings = []
-    if shape is None:
-        warnings.append("Could not derive geometry for the target area.")
-    return result, shape, warnings
-
-
 def download_link(label: str, df: pd.DataFrame, filename: str, key: str):
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(label, data=csv, file_name=filename, mime="text/csv", key=key)
@@ -924,15 +549,26 @@ st.markdown("""
         flex: 1 !important;
     }
     
-    /* Position the Browse files button 150px below the drag and drop text */
+    /* Position the Browse files button right under the file type message */
     section[data-testid="stFileUploaderDropzone"] > span {
         display: flex !important;
         justify-content: center !important;
         align-items: center !important;
-        margin-top: 150px !important;
+        margin-top: 10px !important;
         padding-top: 0 !important;
         padding-bottom: 20px !important;
         width: 100% !important;
+    }
+    
+    /* Hide default file type message and replace with custom one */
+    section[data-testid="stFileUploaderDropzone"] p[data-testid="stMarkdownContainer"] {
+        margin-bottom: 5px !important;
+    }
+    
+    /* Custom file type message styling */
+    section[data-testid="stFileUploaderDropzone"] p[data-testid="stMarkdownContainer"] small {
+        font-size: 0.875rem !important;
+        color: #666 !important;
     }
     
     section[data-testid="stFileUploaderDropzone"] > span > button {
@@ -1022,11 +658,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Main input widgets
-st.markdown("### Upload CSV")
+st.markdown("### Upload File")
 uploaded = st.file_uploader(
-    "Upload CSV from Google Ads",
-    type=["csv"],
-    help="Upload your Google Ads search terms CSV file"
+    "Upload CSV or XLSX from Google Ads",
+    type=["csv", "xlsx"],
+    help="Supported Files: CSV, XLSX"
 )
 
 # Inject CSS and JavaScript right after file uploader to ensure it applies
@@ -1042,6 +678,12 @@ st.markdown("""
         background-color: rgba(31, 119, 180, 0.15) !important;
         box-shadow: 0 0 20px rgba(31, 119, 180, 0.3) !important;
     }
+    
+    /* Customize file type message */
+    section[data-testid="stFileUploaderDropzone"] p[data-testid="stMarkdownContainer"] small {
+        font-size: 0.875rem !important;
+        color: #666 !important;
+    }
 </style>
 <script>
     // Force resize using JavaScript as backup - target the correct element
@@ -1054,13 +696,41 @@ st.markdown("""
         }
     }
     
+    // Customize file type message
+    function customizeFileTypeMessage() {
+        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
+        if (dropZone) {
+            // Find the small text element that contains the file type message
+            const smallElements = dropZone.querySelectorAll('small');
+            smallElements.forEach(function(small) {
+                const text = small.textContent || small.innerText;
+                // Replace the default message with custom one
+                if (text.includes('Limit') || text.includes('CSV') || text.includes('XLSX')) {
+                    small.textContent = 'Supported Files: CSV, XLSX';
+                    small.style.color = '#666';
+                    small.style.fontSize = '0.875rem';
+                }
+            });
+        }
+    }
+    
     // Run immediately and repeatedly
     forceResizeUploader();
-    setInterval(forceResizeUploader, 300);
+    customizeFileTypeMessage();
+    setInterval(function() {
+        forceResizeUploader();
+        customizeFileTypeMessage();
+    }, 300);
     
     // Also run after a delay to catch late renders
-    setTimeout(forceResizeUploader, 1000);
-    setTimeout(forceResizeUploader, 2000);
+    setTimeout(function() {
+        forceResizeUploader();
+        customizeFileTypeMessage();
+    }, 1000);
+    setTimeout(function() {
+        forceResizeUploader();
+        customizeFileTypeMessage();
+    }, 2000);
 </script>
 """, unsafe_allow_html=True)
 
@@ -1073,7 +743,7 @@ target_area = st.text_input(
 
 # Advanced settings in sidebar
 with st.sidebar.expander("⚙️ Advanced Settings"):
-    throttle = st.slider("Geocode pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
+    throttle = st.slider("LLM API pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
 
 # Run button
 st.markdown("### Run Analysis")
@@ -1420,16 +1090,6 @@ if run_button and uploaded and target_area.strip():
         log_sections.append("❌ OpenAI: Package not installed")
         log_sections.append(f"  Import Error: {OPENAI_IMPORT_ERROR if 'OPENAI_IMPORT_ERROR' in globals() and OPENAI_IMPORT_ERROR else 'Package not installed'}")
     
-    # Geocoder Status
-    if GEOCODER_API_KEY or "nominatim" in GEOCODER_URL.lower():
-        log_sections.append("✅ Geocoder: Configured")
-        log_sections.append(f"  Service: {'geocode.maps.co' if 'geocode.maps.co' in GEOCODER_URL else 'Nominatim (OpenStreetMap)'}")
-        log_sections.append(f"  URL: {GEOCODER_URL}")
-        if GEOCODER_API_KEY:
-            log_sections.append(f"  API Key: {'Present' if GEOCODER_API_KEY else 'Not set'}")
-    else:
-        log_sections.append("⚠️ Geocoder: API key missing (required for geocode.maps.co)")
-    
     log_sections.append("")
     
     # ========== CONFIGURATION SOURCES ==========
@@ -1453,13 +1113,9 @@ if run_button and uploaded and target_area.strip():
     
     # Environment Variables
     env_openai = os.getenv("OPENAI_API_KEY", None)
-    env_geocoder_key = os.getenv("GEOCODER_API_KEY", None)
-    env_geocoder_url = os.getenv("GEOCODER_URL", None)
     
     log_sections.append(f"Environment Variables:")
     log_sections.append(f"  OPENAI_API_KEY: {'✅ Found' if env_openai else '❌ Not set'}")
-    log_sections.append(f"  GEOCODER_API_KEY: {'✅ Found' if env_geocoder_key else '❌ Not set'}")
-    log_sections.append(f"  GEOCODER_URL: {'✅ Set' if env_geocoder_url else '❌ Using default'}")
     log_sections.append("")
     
     # ========== LOCATION VALIDATION AUDIT LOG ==========
