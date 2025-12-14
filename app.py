@@ -21,7 +21,7 @@ except Exception as e:
     OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
-APP_VERSION = "v1.13"
+APP_VERSION = "v1.14"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -549,26 +549,28 @@ st.markdown("""
         flex: 1 !important;
     }
     
+    /* Style the file type message paragraph - position it right under "Drag and drop file here" */
+    section[data-testid="stFileUploaderDropzone"] > p {
+        margin-bottom: 8px !important;
+        margin-top: 5px !important;
+        padding: 0 !important;
+    }
+    
+    /* Custom file type message styling */
+    section[data-testid="stFileUploaderDropzone"] > p small {
+        font-size: 0.875rem !important;
+        color: #666 !important;
+    }
+    
     /* Position the Browse files button right under the file type message */
     section[data-testid="stFileUploaderDropzone"] > span {
         display: flex !important;
         justify-content: center !important;
         align-items: center !important;
-        margin-top: 10px !important;
+        margin-top: 0 !important;
         padding-top: 0 !important;
         padding-bottom: 20px !important;
         width: 100% !important;
-    }
-    
-    /* Hide default file type message and replace with custom one */
-    section[data-testid="stFileUploaderDropzone"] p[data-testid="stMarkdownContainer"] {
-        margin-bottom: 5px !important;
-    }
-    
-    /* Custom file type message styling */
-    section[data-testid="stFileUploaderDropzone"] p[data-testid="stMarkdownContainer"] small {
-        font-size: 0.875rem !important;
-        color: #666 !important;
     }
     
     section[data-testid="stFileUploaderDropzone"] > span > button {
@@ -660,9 +662,9 @@ st.markdown("""
 # Main input widgets
 st.markdown("### Upload File")
 uploaded = st.file_uploader(
-    "Upload CSV or XLSX from Google Ads",
+    "",
     type=["csv", "xlsx"],
-    help="Supported Files: CSV, XLSX"
+    label_visibility="collapsed"
 )
 
 # Inject CSS and JavaScript right after file uploader to ensure it applies
@@ -705,8 +707,8 @@ st.markdown("""
             smallElements.forEach(function(small) {
                 const text = small.textContent || small.innerText;
                 // Replace the default message with custom one
-                if (text.includes('Limit') || text.includes('CSV') || text.includes('XLSX')) {
-                    small.textContent = 'Supported Files: CSV, XLSX';
+                if (text.includes('Limit') || text.includes('CSV') || text.includes('XLSX') || text.includes('200MB')) {
+                    small.textContent = 'Supported Formats: CSV , XLSX';
                     small.style.color = '#666';
                     small.style.fontSize = '0.875rem';
                 }
