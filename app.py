@@ -470,8 +470,13 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
         df = pd.read_csv(uploaded_file)
     
     # Remove rows that are totals or empty
-    df = df[df.iloc[:, 0].astype(str).str.lower() != "total"]
-    df = df.dropna(subset=[df.columns[0]])  # Drop rows where first column is empty
+    # Check for summary rows that start with "Total:" (with or without colon)
+    first_col_str = df.iloc[:, 0].astype(str).str.strip()
+    is_total_row = first_col_str.str.lower().str.startswith("total")
+    df = df[~is_total_row]
+    
+    # Also remove rows where first column is empty
+    df = df.dropna(subset=[df.columns[0]])
     
     return df
 
@@ -519,6 +524,29 @@ def _aggregate_search_terms(df: pd.DataFrame) -> pd.DataFrame:
     aggregated = df.groupby("search_term", as_index=False)["impressions"].sum()
     aggregated = aggregated.sort_values("impressions", ascending=False)
     return aggregated.reset_index(drop=True)
+
+
+def _remove_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove summary rows that start with 'Total:' or similar patterns.
+    These are typically added by spreadsheet applications or report generators.
+    """
+    if df.empty:
+        return df
+    
+    # Check if search_term column exists (after standardization)
+    if "search_term" in df.columns:
+        # Remove rows where search_term starts with "Total:" (case-insensitive)
+        search_terms = df["search_term"].astype(str).str.strip()
+        is_summary = search_terms.str.lower().str.startswith("total")
+        df = df[~is_summary]
+    else:
+        # If not standardized yet, check first column
+        first_col_str = df.iloc[:, 0].astype(str).str.strip()
+        is_summary = first_col_str.str.lower().str.startswith("total")
+        df = df[~is_summary]
+    
+    return df.reset_index(drop=True)
 
 
 def _extract_locations_from_search_terms(df: pd.DataFrame) -> pd.DataFrame:
@@ -1346,8 +1374,13 @@ if run_button and uploaded and target_area.strip():
     
     df_aggregated = _aggregate_search_terms(df_cleaned)
     duplicates_found = len(df_cleaned) - len(df_aggregated)
-    progress_bar.progress(0.40)
+    progress_bar.progress(0.35)
     status_text.text(f"Aggregated: {len(df_aggregated)} unique search terms")
+    
+    # Remove summary rows (after aggregation as requested)
+    df_aggregated = _remove_summary_rows(df_aggregated)
+    progress_bar.progress(0.40)
+    status_text.text(f"Removed summary rows: {len(df_aggregated)} search terms remaining")
 
     # Step 3: Extract locations from search terms (40-60%)
     progress_bar.progress(0.45)
