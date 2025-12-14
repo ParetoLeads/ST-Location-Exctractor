@@ -565,13 +565,13 @@ st.markdown("""
         align-items: center !important;
     }
     
-    /* Style button when it's inside the instructions div */
-    div[data-testid="stFileUploaderDropzoneInstructions"] button {
+    /* Style button span when it's inside the text container */
+    div[data-testid="stFileUploaderDropzoneInstructions"] .st-emotion-cache-kt79cc .st-emotion-cache-epvm6 {
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
         margin-top: 5px !important;
-    }
-    
-    div[data-testid="stFileUploaderDropzoneInstructions"] span button {
-        margin-top: 5px !important;
+        width: 100% !important;
     }
     
     .stTextInput > div > div > input {
@@ -700,50 +700,26 @@ st.markdown("""
         const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
         const instructionsDiv = document.querySelector('div[data-testid="stFileUploaderDropzoneInstructions"]');
         
-        if (instructionsDiv) {
+        if (instructionsDiv && dropZone) {
             // Find and update the file type message span
             const fileTypeSpan = instructionsDiv.querySelector('.st-emotion-cache-1sct1q3');
             if (fileTypeSpan) {
                 const text = fileTypeSpan.textContent || fileTypeSpan.innerText;
-                if (text.includes('Limit') || text.includes('CSV') || text.includes('XLSX') || text.includes('200MB')) {
-                    fileTypeSpan.textContent = 'Supported Formats: CSV , XLSX';
-                    fileTypeSpan.style.color = '#666';
-                    fileTypeSpan.style.fontSize = '0.875rem';
-                    fileTypeSpan.style.display = 'block';
-                    fileTypeSpan.style.marginTop = '5px';
-                    fileTypeSpan.style.marginBottom = '10px';
+                // Only change if it still contains the original text
+                if (text.includes('Limit') || text.includes('200MB')) {
+                    fileTypeSpan.textContent = 'Supported Files: CSV, XLSX';
                 }
             }
             
-            // Move the browse files button inside the instructions div
-            if (dropZone && instructionsDiv) {
-                // Find the button span (sibling to instructions div)
-                const allSpans = Array.from(dropZone.children).filter(el => el.tagName === 'SPAN');
-                let buttonSpan = null;
-                let button = null;
+            // Find the button span by its class and move it inside the instructions div
+            const buttonSpan = dropZone.querySelector('span.st-emotion-cache-epvm6');
+            if (buttonSpan && !instructionsDiv.contains(buttonSpan)) {
+                // Get the text container inside instructions div
+                const textContainer = instructionsDiv.querySelector('.st-emotion-cache-kt79cc');
                 
-                for (let span of allSpans) {
-                    const btn = span.querySelector('button');
-                    if (btn && span !== instructionsDiv && !instructionsDiv.contains(span)) {
-                        buttonSpan = span;
-                        button = btn;
-                        break;
-                    }
-                }
-                
-                // Check if button is already moved
-                const existingButton = instructionsDiv.querySelector('button');
-                if (button && !existingButton && buttonSpan) {
-                    // Get the text container inside instructions div
-                    const textContainer = instructionsDiv.querySelector('.st-emotion-cache-kt79cc');
-                    
-                    if (textContainer) {
-                        // Move the button span into the text container
-                        textContainer.appendChild(buttonSpan);
-                        
-                        // Style the button span
-                        buttonSpan.style.cssText = 'display: flex; justify-content: center; align-items: center; margin-top: 5px; width: 100%;';
-                    }
+                if (textContainer) {
+                    // Move the button span into the text container (after the file type message)
+                    textContainer.appendChild(buttonSpan);
                 }
             }
         }
