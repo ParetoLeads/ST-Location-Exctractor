@@ -21,7 +21,7 @@ except Exception as e:
     OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
-APP_VERSION = "v1.14"
+APP_VERSION = "v1.15"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -561,11 +561,13 @@ st.markdown("""
     }
     
     /* When button is moved inside instructions, style it properly */
-    div[data-testid="stFileUploaderDropzoneInstructions"] .browse-btn-moved {
-        margin-top: 12px !important;
+    div[data-testid="stFileUploaderDropzoneInstructions"] .browse-btn-moved,
+    .browse-btn-moved {
+        margin-top: 24px !important;
         position: relative !important;
         bottom: auto !important;
         transform: none !important;
+        display: block !important;
     }
     
     .stTextInput > div > div > input {
@@ -619,6 +621,8 @@ st.markdown("""
             // Check if we already moved it
             if (!buttonSpan.classList.contains('browse-btn-moved')) {
                 buttonSpan.classList.add('browse-btn-moved');
+                buttonSpan.style.marginTop = '24px';
+                buttonSpan.style.display = 'block';
                 // Move the button span inside the instructions div
                 const textContainer = instructionsDiv.querySelector('div');
                 if (textContainer) {
@@ -627,6 +631,11 @@ st.markdown("""
                     instructionsDiv.appendChild(buttonSpan);
                 }
             }
+        }
+        // Ensure margin is always applied
+        const movedBtn = dropZone.querySelector('.browse-btn-moved');
+        if (movedBtn) {
+            movedBtn.style.marginTop = '24px';
         }
     }
     
@@ -734,13 +743,19 @@ st.markdown("""
         if (buttonSpan && buttonSpan.querySelector('button') && !buttonSpan.classList.contains('browse-btn-moved')) {
             buttonSpan.classList.add('browse-btn-moved');
             buttonSpan.style.position = 'relative';
-            buttonSpan.style.marginTop = '12px';
+            buttonSpan.style.marginTop = '24px';
+            buttonSpan.style.display = 'block';
             const textContainer = instructionsDiv.querySelector('div');
             if (textContainer) {
                 textContainer.appendChild(buttonSpan);
             } else {
                 instructionsDiv.appendChild(buttonSpan);
             }
+        }
+        // Ensure margin is always applied even after re-renders
+        const movedBtn = document.querySelector('.browse-btn-moved');
+        if (movedBtn) {
+            movedBtn.style.marginTop = '24px';
         }
     }
     
