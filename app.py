@@ -21,7 +21,7 @@ except Exception as e:
     OPENAI_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
 
 
-APP_VERSION = "v1.15"
+APP_VERSION = "v1.16"
 
 # Function to get OpenAI API key from Streamlit secrets or environment
 def _get_openai_api_key():
@@ -520,6 +520,7 @@ st.markdown("""
         flex-direction: column !important;
         align-items: center !important;
         justify-content: center !important;
+        position: relative !important;
     }
     
     /* Hover state */
@@ -553,21 +554,22 @@ st.markdown("""
         gap: 8px !important;
     }
     
-    /* Hide the button span at the bottom - we'll show it via JS repositioning */
-    section[data-testid="stFileUploaderDropzone"] > span:last-child {
-        position: absolute !important;
-        bottom: 50% !important;
-        transform: translateY(80px) !important;
+    /* Hide the original "Limit 200MB..." text and replace with custom text */
+    section[data-testid="stFileUploaderDropzone"] .e16n7gab4 {
+        font-size: 0 !important;
+        color: transparent !important;
+    }
+    section[data-testid="stFileUploaderDropzone"] .e16n7gab4::after {
+        content: 'Supported Files: CSV, XLSX' !important;
+        font-size: 14px !important;
+        color: #6b7280 !important;
     }
     
-    /* When button is moved inside instructions, style it properly */
-    div[data-testid="stFileUploaderDropzoneInstructions"] .browse-btn-moved,
-    .browse-btn-moved {
-        margin-top: 24px !important;
+    /* Position the button span below the text with proper spacing */
+    section[data-testid="stFileUploaderDropzone"] > .e16n7gab6 {
+        margin-top: 20px !important;
         position: relative !important;
-        bottom: auto !important;
-        transform: none !important;
-        display: block !important;
+        order: 3 !important;
     }
     
     .stTextInput > div > div > input {
@@ -599,46 +601,6 @@ st.markdown("""
     }
 </style>
 <script>
-    // Customize file uploader text and button position
-    function customizeFileUploader() {
-        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
-        const instructionsDiv = document.querySelector('div[data-testid="stFileUploaderDropzoneInstructions"]');
-        
-        if (!dropZone || !instructionsDiv) return;
-        
-        // Find and update the file type message (the second span in the text container)
-        const allSpans = instructionsDiv.querySelectorAll('span');
-        allSpans.forEach(span => {
-            const text = span.textContent || span.innerText;
-            if (text && (text.includes('Limit') || text.includes('200MB') || text.includes('per file'))) {
-                span.textContent = 'Supported Files: CSV, XLSX';
-            }
-        });
-        
-        // Find the button span (it's a direct child of the section, not inside instructions)
-        const buttonSpan = dropZone.querySelector(':scope > span:last-child');
-        if (buttonSpan && buttonSpan.querySelector('button')) {
-            // Check if we already moved it
-            if (!buttonSpan.classList.contains('browse-btn-moved')) {
-                buttonSpan.classList.add('browse-btn-moved');
-                buttonSpan.style.marginTop = '24px';
-                buttonSpan.style.display = 'block';
-                // Move the button span inside the instructions div
-                const textContainer = instructionsDiv.querySelector('div');
-                if (textContainer) {
-                    textContainer.appendChild(buttonSpan);
-                } else {
-                    instructionsDiv.appendChild(buttonSpan);
-                }
-            }
-        }
-        // Ensure margin is always applied
-        const movedBtn = dropZone.querySelector('.browse-btn-moved');
-        if (movedBtn) {
-            movedBtn.style.marginTop = '24px';
-        }
-    }
-    
     // Enhanced drag-over handler
     function setupDragOver() {
         const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
@@ -667,22 +629,16 @@ st.markdown("""
         }
     }
     
-    // Run all customizations
-    function runCustomizations() {
-        customizeFileUploader();
-        setupDragOver();
-    }
-    
-    // Run immediately and on various events
+    // Run immediately
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', runCustomizations);
+        document.addEventListener('DOMContentLoaded', setupDragOver);
     } else {
-        runCustomizations();
+        setupDragOver();
     }
     
     // Watch for Streamlit re-renders
     const observer = new MutationObserver(function(mutations) {
-        runCustomizations();
+        setupDragOver();
     });
     
     observer.observe(document.body, {
@@ -690,8 +646,7 @@ st.markdown("""
         subtree: true
     });
     
-    // Also use interval as backup
-    setInterval(runCustomizations, 300);
+    setInterval(setupDragOver, 500);
 </script>
 """, unsafe_allow_html=True)
 
@@ -703,7 +658,7 @@ uploaded = st.file_uploader(
     label_visibility="collapsed"
 )
 
-# Inject CSS and JavaScript right after file uploader to ensure it applies
+# Inject CSS right after file uploader to ensure it applies
 st.markdown("""
 <style>
     /* Force the drop zone section to be 450px tall */
@@ -716,56 +671,23 @@ st.markdown("""
         background-color: rgba(31, 119, 180, 0.15) !important;
         box-shadow: 0 0 20px rgba(31, 119, 180, 0.3) !important;
     }
-</style>
-<script>
-    // Ensure customizations are applied after file uploader renders
-    function applyUploaderCustomizations() {
-        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
-        const instructionsDiv = document.querySelector('div[data-testid="stFileUploaderDropzoneInstructions"]');
-        
-        if (!dropZone || !instructionsDiv) return;
-        
-        // Force height
-        dropZone.style.height = '450px';
-        dropZone.style.minHeight = '450px';
-        
-        // Update file type message text - find spans and update
-        const allSpans = instructionsDiv.querySelectorAll('span');
-        allSpans.forEach(span => {
-            const text = span.textContent || span.innerText;
-            if (text && (text.includes('Limit') || text.includes('200MB') || text.includes('per file'))) {
-                span.textContent = 'Supported Files: CSV, XLSX';
-            }
-        });
-        
-        // Move button into the instructions area
-        const buttonSpan = dropZone.querySelector(':scope > span:last-child');
-        if (buttonSpan && buttonSpan.querySelector('button') && !buttonSpan.classList.contains('browse-btn-moved')) {
-            buttonSpan.classList.add('browse-btn-moved');
-            buttonSpan.style.position = 'relative';
-            buttonSpan.style.marginTop = '24px';
-            buttonSpan.style.display = 'block';
-            const textContainer = instructionsDiv.querySelector('div');
-            if (textContainer) {
-                textContainer.appendChild(buttonSpan);
-            } else {
-                instructionsDiv.appendChild(buttonSpan);
-            }
-        }
-        // Ensure margin is always applied even after re-renders
-        const movedBtn = document.querySelector('.browse-btn-moved');
-        if (movedBtn) {
-            movedBtn.style.marginTop = '24px';
-        }
+    
+    /* Hide original text and show custom text via CSS */
+    section[data-testid="stFileUploaderDropzone"] .e16n7gab4 {
+        font-size: 0 !important;
+        color: transparent !important;
+    }
+    section[data-testid="stFileUploaderDropzone"] .e16n7gab4::after {
+        content: 'Supported Files: CSV, XLSX' !important;
+        font-size: 14px !important;
+        color: #6b7280 !important;
     }
     
-    // Run repeatedly to catch re-renders
-    applyUploaderCustomizations();
-    setInterval(applyUploaderCustomizations, 300);
-    setTimeout(applyUploaderCustomizations, 500);
-    setTimeout(applyUploaderCustomizations, 1000);
-    setTimeout(applyUploaderCustomizations, 2000);
-</script>
+    /* Add margin above button */
+    section[data-testid="stFileUploaderDropzone"] > .e16n7gab6 {
+        margin-top: 20px !important;
+    }
+</style>
 """, unsafe_allow_html=True)
 
 st.markdown("### Target Area")
