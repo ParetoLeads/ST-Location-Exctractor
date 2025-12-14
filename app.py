@@ -924,13 +924,13 @@ st.markdown("""
         flex: 1 !important;
     }
     
-    /* Position the Browse files button at the bottom center */
+    /* Position the Browse files button 150px below the drag and drop text */
     section[data-testid="stFileUploaderDropzone"] > span {
         display: flex !important;
         justify-content: center !important;
         align-items: center !important;
-        margin-top: auto !important;
-        padding-top: 20px !important;
+        margin-top: 150px !important;
+        padding-top: 0 !important;
         padding-bottom: 20px !important;
         width: 100% !important;
     }
@@ -1110,341 +1110,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Unified Technical Details & Status Log
-with st.expander("🔧 Technical Details & Status", expanded=False):
-    # Build comprehensive log
-    log_sections = []
-    
-    # ========== APPLICATION INFO ==========
-    log_sections.append("## 📱 Application Information")
-    log_sections.append(f"- **App Version**: {APP_VERSION}")
-    log_sections.append(f"- **Python Version**: {os.sys.version.split()[0]}")
-    log_sections.append(f"- **Streamlit Version**: {st.__version__}")
-    log_sections.append("")
-    
-    # ========== GEOCODER CONFIGURATION ==========
-    log_sections.append("## 🌍 Geocoder Configuration")
-    log_sections.append(f"- **Geocoder URL**: {GEOCODER_URL}")
-    log_sections.append(f"- **Geocoder Service**: {'geocode.maps.co' if 'geocode.maps.co' in GEOCODER_URL else 'Nominatim (OpenStreetMap)'}")
-    log_sections.append(f"- **API Key Status**: {'✅ Present' if GEOCODER_API_KEY else '❌ Not set'}")
-    
-    if GEOCODER_API_KEY:
-        log_sections.append(f"- **API Key Length**: {len(GEOCODER_API_KEY)} characters")
-        if len(GEOCODER_API_KEY) >= 8:
-            log_sections.append(f"- **API Key Preview**: {GEOCODER_API_KEY[:4]}...{GEOCODER_API_KEY[-4:]}")
-        
-        # Geocoder API Key Test (if applicable)
-        if "geocode.maps.co" in GEOCODER_URL:
-            log_sections.append("")
-            log_sections.append("### Geocoder API Key Test")
-            log_sections.append("**Troubleshooting 401 errors:**")
-            log_sections.append("1. Go to https://geocode.maps.co and log into your account")
-            log_sections.append("2. Check that your API key matches exactly what's shown in your account")
-            log_sections.append("3. Try regenerating/copying the key again")
-            log_sections.append("4. Make sure your account is active (check usage limits)")
-            log_sections.append("")
-            
-            # Test button for geocoder
-            if st.button("🧪 Test Geocoder API Key", key="test_geocoder_key"):
-                test_url = f"{GEOCODER_URL}?q=Miami, FL&api_key={GEOCODER_API_KEY}"
-                st.code(test_url, language=None)
-                try:
-                    resp = requests.get(GEOCODER_URL, params={"q": "Miami, FL", "api_key": GEOCODER_API_KEY}, timeout=10)
-                    st.write(f"**Status Code:** {resp.status_code}")
-                    st.write(f"**Response:** {resp.text[:500]}")
-                    if resp.status_code == 200:
-                        st.success("✅ Geocoder API key works!")
-                    elif resp.status_code == 401:
-                        st.error("❌ API key is INVALID. Please check the troubleshooting steps above.")
-                    else:
-                        st.error(f"❌ API key test failed: {resp.text[:200]}")
-                except Exception as e:
-                    st.error(f"Error testing API key: {e}")
-    else:
-        if "geocode.maps.co" in GEOCODER_URL:
-            log_sections.append("- **⚠️ Warning**: API key required for geocode.maps.co but not found")
-    
-    log_sections.append("")
-    
-    # ========== OPENAI CONFIGURATION ==========
-    log_sections.append("## 🤖 OpenAI Configuration")
-    log_sections.append(f"- **Package Installed**: {'✅ Yes' if OPENAI_AVAILABLE else '❌ No'}")
-    
-    if not OPENAI_AVAILABLE:
-        log_sections.append(f"- **Import Error**: {OPENAI_IMPORT_ERROR if 'OPENAI_IMPORT_ERROR' in globals() and OPENAI_IMPORT_ERROR else 'Package not installed'}")
-        log_sections.append("")
-        log_sections.append("### ⚠️ FIX REQUIRED - OpenAI Package Missing")
-        log_sections.append("The `openai` package is not installed. To fix:")
-        log_sections.append("1. Make sure `requirements.txt` includes `openai`")
-        log_sections.append("2. Push changes to GitHub")
-        log_sections.append("3. In Streamlit Cloud, go to Settings → Dependencies")
-        log_sections.append("4. Click 'Reboot app' to reinstall dependencies")
-        log_sections.append("")
-    else:
-        log_sections.append(f"- **API Key Found**: {'✅ Yes' if OPENAI_API_KEY else '❌ No'}")
-        
-        if OPENAI_API_KEY:
-            log_sections.append(f"- **API Key Length**: {len(OPENAI_API_KEY)} characters")
-            log_sections.append(f"- **API Key Preview**: {OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 11 else '***'}")
-            log_sections.append(f"- **API Key Starts With**: {OPENAI_API_KEY[:3] if len(OPENAI_API_KEY) >= 3 else 'N/A'}")
-        
-        log_sections.append(f"- **Client Initialized**: {'✅ Yes' if openai_client else '❌ No'}")
-        
-        # OpenAI Connection Test
-        log_sections.append("")
-        log_sections.append("### OpenAI Connection Test")
-        if openai_client:
-            try:
-                test_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": "test"}],
-                    max_tokens=5
-                )
-                log_sections.append("- **Test API Call**: ✅ Success")
-                log_sections.append(f"- **Model Response**: {test_response.choices[0].message.content[:50]}")
-            except Exception as e:
-                log_sections.append("- **Test API Call**: ❌ Failed")
-                log_sections.append(f"- **Error**: {str(e)}")
-                log_sections.append(f"- **Error Type**: {type(e).__name__}")
-        else:
-            log_sections.append("- **Test API Call**: ⏭️ Skipped (client not initialized)")
-    
-    log_sections.append("")
-    
-    # ========== CONFIGURATION SOURCES ==========
-    log_sections.append("## 🔐 Configuration Sources")
-    
-    # Streamlit Secrets Check
-    log_sections.append("### Streamlit Secrets")
-    try:
-        if hasattr(st, 'secrets'):
-            log_sections.append("- **Available**: ✅ Yes")
-            try:
-                secrets_keys = list(st.secrets.keys())
-                log_sections.append(f"- **Available Keys**: {', '.join(secrets_keys) if secrets_keys else 'None found'}")
-                
-                # Test OPENAI_API_KEY access
-                try:
-                    direct_key = st.secrets["OPENAI_API_KEY"]
-                    log_sections.append(f"- **OPENAI_API_KEY (direct)**: ✅ Found (length: {len(str(direct_key))})")
-                except KeyError:
-                    log_sections.append("- **OPENAI_API_KEY (direct)**: ❌ Key not found")
-                except Exception as e:
-                    log_sections.append(f"- **OPENAI_API_KEY (direct)**: ❌ Error - {str(e)} ({type(e).__name__})")
-                
-                try:
-                    get_key = st.secrets.get("OPENAI_API_KEY", None)
-                    if get_key:
-                        log_sections.append(f"- **OPENAI_API_KEY (get method)**: ✅ Found (length: {len(str(get_key))})")
-                    else:
-                        log_sections.append("- **OPENAI_API_KEY (get method)**: ❌ Returned None")
-                except Exception as e:
-                    log_sections.append(f"- **OPENAI_API_KEY (get method)**: ❌ Error - {str(e)} ({type(e).__name__})")
-            except Exception as e:
-                log_sections.append(f"- **Error reading secrets**: {str(e)} ({type(e).__name__})")
-        else:
-            log_sections.append("- **Available**: ❌ No")
-    except Exception as e:
-        log_sections.append(f"- **Error**: {str(e)} ({type(e).__name__})")
-    
-    log_sections.append("")
-    
-    # Environment Variables Check
-    log_sections.append("### Environment Variables")
-    env_openai = os.getenv("OPENAI_API_KEY", None)
-    env_geocoder_key = os.getenv("GEOCODER_API_KEY", None)
-    env_geocoder_url = os.getenv("GEOCODER_URL", None)
-    
-    log_sections.append(f"- **OPENAI_API_KEY**: {'✅ Found' if env_openai else '❌ Not set'}")
-    if env_openai:
-        log_sections.append(f"  - Length: {len(env_openai)} characters")
-    
-    log_sections.append(f"- **GEOCODER_API_KEY**: {'✅ Found' if env_geocoder_key else '❌ Not set'}")
-    if env_geocoder_key:
-        log_sections.append(f"  - Length: {len(env_geocoder_key)} characters")
-    
-    log_sections.append(f"- **GEOCODER_URL**: {'✅ Set' if env_geocoder_url else '❌ Using default'}")
-    if env_geocoder_url:
-        log_sections.append(f"  - Value: {env_geocoder_url}")
-    
-    log_sections.append("")
-    
-    # ========== DEPENDENCIES ==========
-    log_sections.append("## 📦 Dependencies")
-    try:
-        requirements_path = "requirements.txt"
-        if os.path.exists(requirements_path):
-            with open(requirements_path, 'r') as f:
-                requirements = f.read()
-            log_sections.append("- **requirements.txt**: ✅ Found")
-            log_sections.append(f"- **Contains 'openai'**: {'✅ Yes' if 'openai' in requirements.lower() else '❌ No'}")
-            log_sections.append("- **Installed Packages**:")
-            for line in requirements.strip().split('\n'):
-                if line.strip():
-                    log_sections.append(f"  - {line.strip()}")
-        else:
-            log_sections.append("- **requirements.txt**: ❌ Not found")
-    except Exception as e:
-        log_sections.append(f"- **Error reading requirements.txt**: {str(e)}")
-    
-    log_sections.append("")
-    
-    # ========== STATUS SUMMARY ==========
-    log_sections.append("## 📊 Status Summary")
-    
-    # Determine overall status
-    status_items = []
-    if OPENAI_AVAILABLE and openai_client:
-        status_items.append("✅ OpenAI: Ready")
-    elif OPENAI_AVAILABLE and OPENAI_API_KEY:
-        status_items.append("⚠️ OpenAI: Package OK but client not initialized")
-    elif OPENAI_AVAILABLE:
-        status_items.append("⚠️ OpenAI: Package installed but API key missing")
-    else:
-        status_items.append("❌ OpenAI: Package not installed")
-    
-    if GEOCODER_API_KEY or "nominatim" in GEOCODER_URL.lower():
-        status_items.append("✅ Geocoder: Configured")
-    else:
-        status_items.append("⚠️ Geocoder: API key missing (required for geocode.maps.co)")
-    
-    for item in status_items:
-        log_sections.append(f"- {item}")
-    
-    log_sections.append("")
-    log_sections.append("---")
-    log_sections.append("")
-    log_sections.append("**💡 Tip**: Copy the log below if you need help debugging. It contains all the information needed to diagnose issues.")
-    
-    # Display the log
-    log_text = "\n".join(log_sections)
-    st.markdown(log_text)
-    
-    # Copy button and text area
-    st.markdown("**📋 Complete Debug Log:**")
-    
-    # Copyable text area with hidden label
-    log_textarea = st.text_area(
-        "Log content:",
-        value=log_text,
-        height=500,
-        key="technical_log_output",
-        label_visibility="collapsed"
-    )
-    
-    # Copy button using JavaScript
-    st.markdown("""
-    <script>
-        function setupCopyButton() {
-            // Find the textarea by its key
-            const textarea = document.querySelector('textarea[data-testid="technical_log_output"]');
-            if (textarea) {
-                // Check if button already exists
-                let copyBtn = document.getElementById('copy-log-js-btn');
-                if (!copyBtn) {
-                    // Create copy button
-                    copyBtn = document.createElement('button');
-                    copyBtn.id = 'copy-log-js-btn';
-                    copyBtn.innerHTML = '📋 Copy to Clipboard';
-                    copyBtn.style.cssText = 'margin-top: 10px; padding: 10px 20px; background-color: #ff6603; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; width: 100%;';
-                    
-                    copyBtn.onclick = function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        
-                        // Get text from textarea
-                        const text = textarea.value;
-                        
-                        // Copy to clipboard
-                        if (navigator.clipboard && navigator.clipboard.writeText) {
-                            navigator.clipboard.writeText(text).then(function() {
-                                // Success feedback
-                                copyBtn.innerHTML = '✅ Copied to Clipboard!';
-                                copyBtn.style.backgroundColor = '#28a745';
-                                setTimeout(function() {
-                                    copyBtn.innerHTML = '📋 Copy to Clipboard';
-                                    copyBtn.style.backgroundColor = '#ff6603';
-                                }, 2000);
-                            }).catch(function(err) {
-                                // Fallback for older browsers
-                                fallbackCopyTextToClipboard(text, copyBtn);
-                            });
-                        } else {
-                            // Fallback for browsers without clipboard API
-                            fallbackCopyTextToClipboard(text, copyBtn);
-                        }
-                    };
-                    
-                    // Fallback copy function for older browsers
-                    function fallbackCopyTextToClipboard(text, btn) {
-                        const textArea = document.createElement("textarea");
-                        textArea.value = text;
-                        textArea.style.top = "0";
-                        textArea.style.left = "0";
-                        textArea.style.position = "fixed";
-                        document.body.appendChild(textArea);
-                        textArea.focus();
-                        textArea.select();
-                        try {
-                            const successful = document.execCommand('copy');
-                            if (successful) {
-                                btn.innerHTML = '✅ Copied to Clipboard!';
-                                btn.style.backgroundColor = '#28a745';
-                                setTimeout(function() {
-                                    btn.innerHTML = '📋 Copy to Clipboard';
-                                    btn.style.backgroundColor = '#ff6603';
-                                }, 2000);
-                            } else {
-                                btn.innerHTML = '❌ Copy Failed';
-                                btn.style.backgroundColor = '#dc3545';
-                                setTimeout(function() {
-                                    btn.innerHTML = '📋 Copy to Clipboard';
-                                    btn.style.backgroundColor = '#ff6603';
-                                }, 2000);
-                            }
-                        } catch (err) {
-                            btn.innerHTML = '❌ Copy Failed';
-                            btn.style.backgroundColor = '#dc3545';
-                            setTimeout(function() {
-                                btn.innerHTML = '📋 Copy to Clipboard';
-                                btn.style.backgroundColor = '#ff6603';
-                            }, 2000);
-                        }
-                        document.body.removeChild(textArea);
-                    }
-                    
-                    // Insert button after the textarea container
-                    const textareaContainer = textarea.closest('.stTextArea');
-                    if (textareaContainer) {
-                        textareaContainer.appendChild(copyBtn);
-                    } else if (textarea.parentElement) {
-                        textarea.parentElement.appendChild(copyBtn);
-                    }
-                }
-            }
-        }
-        
-        // Run on load
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupCopyButton);
-        } else {
-            setupCopyButton();
-        }
-        
-        // Watch for Streamlit re-renders
-        const observer = new MutationObserver(function(mutations) {
-            setupCopyButton();
-        });
-        
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-        
-        // Also check periodically as backup
-        setInterval(setupCopyButton, 1000);
-    </script>
-    """, unsafe_allow_html=True)
+# Note: Technical Details & Status has been moved to the Audit Log section below
+# (Only shown when processing is complete)
 
 
 # Only process if Run button is clicked and inputs are provided
@@ -1703,73 +1370,281 @@ if run_button and uploaded and target_area.strip():
     else:
         st.info("No competitor names detected in search terms without locations.")
 
-    # Comprehensive Audit Log
-    st.subheader("📋 Audit Log - Complete Workflow")
+    # Comprehensive Audit Log with Technical Details
+    st.subheader("🔧 Technical Details & Status")
     st.info(
-        "This log shows the complete workflow for each location: original search terms → extracted location → "
-        "final location (with target area) → LLM validation → final status. Use this to audit and debug the process."
+        "Complete workflow audit log and technical configuration details. Use this to audit the process, debug issues, and verify system configuration."
     )
     
-    # Create formatted audit log text
-    audit_log_text = []
-    audit_log_text.append("=" * 80)
-    audit_log_text.append("AUDIT LOG - Location Validation Workflow")
-    audit_log_text.append("=" * 80)
-    audit_log_text.append(f"Target Area: {target_area}")
-    audit_log_text.append("")
-    audit_log_text.append(f"Total Locations Processed: {total_locations}")
-    audit_log_text.append(f"Inside Target Area: {validated_count}")
-    audit_log_text.append(f"Outside Target Area: {unmatched_count}")
-    audit_log_text.append("")
-    audit_log_text.append("=" * 80)
-    audit_log_text.append("")
+    # Build comprehensive log combining technical details and audit log
+    log_sections = []
     
-    for idx, entry in enumerate(audit_log, 1):
-        audit_log_text.append(f"LOCATION #{idx}")
-        audit_log_text.append("-" * 80)
-        audit_log_text.append(f"Original Search Terms: {entry['original_search_terms']}")
-        audit_log_text.append(f"Extracted Location: {entry['extracted_location']}")
-        audit_log_text.append(f"Impressions: {entry['impressions']}")
-        audit_log_text.append("")
-        
-        audit_log_text.append(f"Final Location: {entry['final_location']}")
-        audit_log_text.append(f"Inside Target Area: {entry['inside_target']}")
-        audit_log_text.append("")
-        
-        audit_log_text.append("Reasoning:")
-        for reason in entry['reasoning']:
-            audit_log_text.append(f"  • {reason}")
-        audit_log_text.append("")
-        
-        status_emoji = {"keep": "✅", "exclude": "❌", "unmatched": "⚠️"}.get(entry['status'], "❓")
-        audit_log_text.append(f"Final Status: {status_emoji} {entry['status'].upper()}")
-        audit_log_text.append("")
-        audit_log_text.append("=" * 80)
-        audit_log_text.append("")
+    # ========== PROCESSING SUMMARY ==========
+    log_sections.append("=" * 80)
+    log_sections.append("PROCESSING SUMMARY")
+    log_sections.append("=" * 80)
+    log_sections.append(f"Target Area: {target_area}")
+    log_sections.append(f"Total Search Terms Processed: {len(df_aggregated)}")
+    log_sections.append(f"Locations Extracted: {total_locations}")
+    log_sections.append(f"  ✅ Inside Target Area: {validated_count}")
+    log_sections.append(f"  ❌ Outside Target Area: {unmatched_count}")
+    if not competitor_df.empty:
+        log_sections.append(f"Competitors Detected: {len(agg_competitors)}")
+        log_sections.append(f"  Total Competitor Impressions: {agg_competitors['impressions'].sum():,.0f}")
+    log_sections.append("")
     
-    audit_log_string = "\n".join(audit_log_text)
+    # ========== APPLICATION INFO ==========
+    log_sections.append("=" * 80)
+    log_sections.append("APPLICATION INFORMATION")
+    log_sections.append("=" * 80)
+    log_sections.append(f"App Version: {APP_VERSION}")
+    log_sections.append(f"Python Version: {os.sys.version.split()[0]}")
+    log_sections.append(f"Streamlit Version: {st.__version__}")
+    log_sections.append("")
     
-    # Display audit log in expandable section
+    # ========== CONFIGURATION STATUS ==========
+    log_sections.append("=" * 80)
+    log_sections.append("CONFIGURATION STATUS")
+    log_sections.append("=" * 80)
+    
+    # OpenAI Status
+    if OPENAI_AVAILABLE and openai_client:
+        log_sections.append("✅ OpenAI: Ready")
+        if OPENAI_API_KEY:
+            log_sections.append(f"  API Key: {OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 11 else '***'}")
+    elif OPENAI_AVAILABLE and OPENAI_API_KEY:
+        log_sections.append("⚠️ OpenAI: Package OK but client not initialized")
+    elif OPENAI_AVAILABLE:
+        log_sections.append("❌ OpenAI: Package installed but API key missing")
+    else:
+        log_sections.append("❌ OpenAI: Package not installed")
+        log_sections.append(f"  Import Error: {OPENAI_IMPORT_ERROR if 'OPENAI_IMPORT_ERROR' in globals() and OPENAI_IMPORT_ERROR else 'Package not installed'}")
+    
+    # Geocoder Status
+    if GEOCODER_API_KEY or "nominatim" in GEOCODER_URL.lower():
+        log_sections.append("✅ Geocoder: Configured")
+        log_sections.append(f"  Service: {'geocode.maps.co' if 'geocode.maps.co' in GEOCODER_URL else 'Nominatim (OpenStreetMap)'}")
+        log_sections.append(f"  URL: {GEOCODER_URL}")
+        if GEOCODER_API_KEY:
+            log_sections.append(f"  API Key: {'Present' if GEOCODER_API_KEY else 'Not set'}")
+    else:
+        log_sections.append("⚠️ Geocoder: API key missing (required for geocode.maps.co)")
+    
+    log_sections.append("")
+    
+    # ========== CONFIGURATION SOURCES ==========
+    log_sections.append("=" * 80)
+    log_sections.append("CONFIGURATION SOURCES")
+    log_sections.append("=" * 80)
+    
+    # Streamlit Secrets
+    try:
+        if hasattr(st, 'secrets'):
+            log_sections.append("Streamlit Secrets: ✅ Available")
+            try:
+                secrets_keys = list(st.secrets.keys())
+                log_sections.append(f"  Available Keys: {', '.join(secrets_keys) if secrets_keys else 'None found'}")
+            except Exception as e:
+                log_sections.append(f"  Error reading secrets: {str(e)}")
+        else:
+            log_sections.append("Streamlit Secrets: ❌ Not available")
+    except Exception as e:
+        log_sections.append(f"Streamlit Secrets: ❌ Error - {str(e)}")
+    
+    # Environment Variables
+    env_openai = os.getenv("OPENAI_API_KEY", None)
+    env_geocoder_key = os.getenv("GEOCODER_API_KEY", None)
+    env_geocoder_url = os.getenv("GEOCODER_URL", None)
+    
+    log_sections.append(f"Environment Variables:")
+    log_sections.append(f"  OPENAI_API_KEY: {'✅ Found' if env_openai else '❌ Not set'}")
+    log_sections.append(f"  GEOCODER_API_KEY: {'✅ Found' if env_geocoder_key else '❌ Not set'}")
+    log_sections.append(f"  GEOCODER_URL: {'✅ Set' if env_geocoder_url else '❌ Using default'}")
+    log_sections.append("")
+    
+    # ========== LOCATION VALIDATION AUDIT LOG ==========
+    log_sections.append("=" * 80)
+    log_sections.append("LOCATION VALIDATION AUDIT LOG")
+    log_sections.append("=" * 80)
+    log_sections.append("")
+    
+    if audit_log:
+        for idx, entry in enumerate(audit_log, 1):
+            log_sections.append(f"LOCATION #{idx}")
+            log_sections.append("-" * 80)
+            log_sections.append(f"Original Search Terms: {entry['original_search_terms']}")
+            log_sections.append(f"Extracted Location: {entry['extracted_location']}")
+            log_sections.append(f"Impressions: {entry['impressions']}")
+            log_sections.append(f"Final Location: {entry['final_location']}")
+            log_sections.append(f"Inside Target Area: {entry['inside_target']}")
+            log_sections.append("")
+            log_sections.append("LLM Reasoning:")
+            for reason in entry['reasoning']:
+                log_sections.append(f"  • {reason}")
+            log_sections.append("")
+            status_emoji = {"keep": "✅", "exclude": "❌", "unmatched": "⚠️"}.get(entry['status'], "❓")
+            log_sections.append(f"Final Status: {status_emoji} {entry['status'].upper()}")
+            log_sections.append("")
+            log_sections.append("=" * 80)
+            log_sections.append("")
+    else:
+        log_sections.append("No locations were processed.")
+        log_sections.append("")
+    
+    # ========== COMPETITOR DETECTION LOG ==========
+    if not competitor_df.empty:
+        log_sections.append("=" * 80)
+        log_sections.append("COMPETITOR DETECTION LOG")
+        log_sections.append("=" * 80)
+        log_sections.append(f"Inferred Industry: {industry if 'industry' in locals() else 'N/A'}")
+        log_sections.append(f"Terms Analyzed: {terms_without_locations_count}")
+        log_sections.append(f"Competitors Found: {len(agg_competitors)}")
+        log_sections.append("")
+        
+        for idx, row in agg_competitors.iterrows():
+            log_sections.append(f"COMPETITOR #{idx + 1}")
+            log_sections.append("-" * 80)
+            log_sections.append(f"Competitor Name: {row['competitor_name']}")
+            log_sections.append(f"Search Terms: {row['original_search_term']}")
+            log_sections.append(f"Total Impressions: {row['impressions']:,}")
+            log_sections.append("")
+            log_sections.append("=" * 80)
+            log_sections.append("")
+    
+    # ========== DEPENDENCIES ==========
+    log_sections.append("=" * 80)
+    log_sections.append("DEPENDENCIES")
+    log_sections.append("=" * 80)
+    try:
+        requirements_path = "requirements.txt"
+        if os.path.exists(requirements_path):
+            with open(requirements_path, 'r') as f:
+                requirements = f.read()
+            log_sections.append("requirements.txt: ✅ Found")
+            for line in requirements.strip().split('\n'):
+                if line.strip():
+                    log_sections.append(f"  - {line.strip()}")
+        else:
+            log_sections.append("requirements.txt: ❌ Not found")
+    except Exception as e:
+        log_sections.append(f"Error reading requirements.txt: {str(e)}")
+    
+    log_sections.append("")
+    log_sections.append("=" * 80)
+    log_sections.append("END OF AUDIT LOG")
+    log_sections.append("=" * 80)
+    
+    # Combine all sections
+    complete_log_text = "\n".join(log_sections)
+    
+    # Display in expandable section with copy functionality
     with st.expander("📋 View Complete Audit Log", expanded=False):
-        st.text_area(
-            "Copy this audit log for debugging:",
-            value=audit_log_string,
+        st.markdown("**💡 Tip**: Copy the log below if you need help debugging. It contains all processing details and system configuration.")
+        
+        log_textarea = st.text_area(
+            "Complete audit log:",
+            value=complete_log_text,
             height=600,
-            key="audit_log_display"
+            key="complete_audit_log_display",
+            label_visibility="collapsed"
         )
-    
-    # Also show a summary table
-    audit_summary = []
-    for entry in audit_log:
-        audit_summary.append({
-            "Original Search Terms": entry['original_search_terms'],
-            "Extracted Location": entry['extracted_location'],
-            "Final Location": entry['final_location'],
-            "Inside Target": str(entry['inside_target']) if entry['inside_target'] is not None else "N/A",
-            "Status": entry['status'].upper()
-        })
-    
-    audit_summary_df = pd.DataFrame(audit_summary)
-    with st.expander("📊 Audit Summary Table"):
-        st.dataframe(audit_summary_df)
-
+        
+        # Copy button using JavaScript
+        st.markdown("""
+        <script>
+            function setupAuditCopyButton() {
+                const textarea = document.querySelector('textarea[data-testid="complete_audit_log_display"]');
+                if (textarea) {
+                    let copyBtn = document.getElementById('copy-audit-log-js-btn');
+                    if (!copyBtn) {
+                        copyBtn = document.createElement('button');
+                        copyBtn.id = 'copy-audit-log-js-btn';
+                        copyBtn.innerHTML = '📋 Copy to Clipboard';
+                        copyBtn.style.cssText = 'margin-top: 10px; padding: 10px 20px; background-color: #ff6603; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; width: 100%;';
+                        
+                        copyBtn.onclick = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const text = textarea.value;
+                            
+                            if (navigator.clipboard && navigator.clipboard.writeText) {
+                                navigator.clipboard.writeText(text).then(function() {
+                                    copyBtn.innerHTML = '✅ Copied to Clipboard!';
+                                    copyBtn.style.backgroundColor = '#28a745';
+                                    setTimeout(function() {
+                                        copyBtn.innerHTML = '📋 Copy to Clipboard';
+                                        copyBtn.style.backgroundColor = '#ff6603';
+                                    }, 2000);
+                                }).catch(function(err) {
+                                    copyBtn.innerHTML = '❌ Copy Failed';
+                                    copyBtn.style.backgroundColor = '#dc3545';
+                                    setTimeout(function() {
+                                        copyBtn.innerHTML = '📋 Copy to Clipboard';
+                                        copyBtn.style.backgroundColor = '#ff6603';
+                                    }, 2000);
+                                });
+                            } else {
+                                const textArea = document.createElement('textarea');
+                                textArea.value = text;
+                                textArea.style.position = 'fixed';
+                                textArea.style.opacity = '0';
+                                document.body.appendChild(textArea);
+                                textArea.focus();
+                                textArea.select();
+                                try {
+                                    const successful = document.execCommand('copy');
+                                    if (successful) {
+                                        copyBtn.innerHTML = '✅ Copied to Clipboard!';
+                                        copyBtn.style.backgroundColor = '#28a745';
+                                        setTimeout(function() {
+                                            copyBtn.innerHTML = '📋 Copy to Clipboard';
+                                            copyBtn.style.backgroundColor = '#ff6603';
+                                        }, 2000);
+                                    } else {
+                                        copyBtn.innerHTML = '❌ Copy Failed';
+                                        copyBtn.style.backgroundColor = '#dc3545';
+                                        setTimeout(function() {
+                                            copyBtn.innerHTML = '📋 Copy to Clipboard';
+                                            copyBtn.style.backgroundColor = '#ff6603';
+                                        }, 2000);
+                                    }
+                                } catch (err) {
+                                    copyBtn.innerHTML = '❌ Copy Failed';
+                                    copyBtn.style.backgroundColor = '#dc3545';
+                                    setTimeout(function() {
+                                        copyBtn.innerHTML = '📋 Copy to Clipboard';
+                                        copyBtn.style.backgroundColor = '#ff6603';
+                                    }, 2000);
+                                }
+                                document.body.removeChild(textArea);
+                            }
+                        };
+                        
+                        const textareaContainer = textarea.closest('.stTextArea');
+                        if (textareaContainer) {
+                            textareaContainer.appendChild(copyBtn);
+                        } else if (textarea.parentElement) {
+                            textarea.parentElement.appendChild(copyBtn);
+                        }
+                    }
+                }
+            }
+            
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', setupAuditCopyButton);
+            } else {
+                setupAuditCopyButton();
+            }
+            
+            const observer = new MutationObserver(function(mutations) {
+                setupAuditCopyButton();
+            });
+            
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+            
+            setInterval(setupAuditCopyButton, 1000);
+        </script>
+        """, unsafe_allow_html=True)
