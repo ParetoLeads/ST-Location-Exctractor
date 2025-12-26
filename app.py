@@ -499,20 +499,34 @@ def _remove_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def _extract_locations_from_search_terms(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def _extract_locations_from_search_terms(df: pd.DataFrame, progress_callback=None, status_callback=None) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract location names from search terms and create two dataframes:
     1. Terms with locations (aggregated by location)
     2. Terms without locations (for competitor detection)
+    
+    Args:
+        df: DataFrame with search terms
+        progress_callback: Optional function(progress: float) to update progress
+        status_callback: Optional function(message: str) to update status
     
     Returns: (df_with_locations, df_without_locations)
     """
     results_with_location = []
     results_without_location = []
     
-    for _, row in df.iterrows():
+    total_terms = len(df)
+    for idx, (_, row) in enumerate(df.iterrows(), 1):
         search_term = row["search_term"]
         impressions = row["impressions"]
+        
+        # Update progress if callback provided
+        if progress_callback:
+            progress = 0.45 + ((idx / total_terms) * 0.05)  # 45% to 50%
+            progress_callback(progress)
+        
+        if status_callback:
+            status_callback(f"Extracting locations: {idx}/{total_terms} terms processed | Found: {len(results_with_location)} locations")
         
         extracted_location = _extract_location_from_search_term(search_term)
         
@@ -708,65 +722,99 @@ if run_button and uploaded and target_area.strip():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    # Create real-time log display
+    st.subheader("📋 Processing Log")
+    log_container = st.empty()
+    log_entries = []
+    
+    def add_log_entry(message: str, level: str = "info"):
+        """Add an entry to the real-time log"""
+        timestamp = time.strftime("%H:%M:%S")
+        icon = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "❌"}.get(level, "ℹ️")
+        log_entries.append(f"[{timestamp}] {icon} {message}")
+        # Keep only last 50 entries to avoid overwhelming the display
+        if len(log_entries) > 50:
+            log_entries.pop(0)
+        # Update the log display
+        log_container.text_area("", value="\n".join(log_entries), height=200, key="realtime_log", label_visibility="collapsed")
+    
     # Step 1: Read and clean CSV (0-20%)
     status_text.text("Reading and cleaning CSV file...")
+    add_log_entry("Starting CSV file processing...", "info")
     progress_bar.progress(0.05)
     
     try:
         df_raw = _read_and_clean_csv(uploaded)
         progress_bar.progress(0.10)
         status_text.text(f"CSV loaded: {len(df_raw)} rows found")
+        add_log_entry(f"CSV loaded successfully: {len(df_raw)} rows found", "success")
         
         df_cleaned = _standardize_columns(df_raw)
         progress_bar.progress(0.20)
         status_text.text("Columns standardized")
+        add_log_entry("Columns standardized and validated", "success")
     except Exception as exc:
         progress_bar.empty()
         status_text.empty()
+        add_log_entry(f"Error reading CSV: {str(exc)}", "error")
         st.error(f"❌ Problem reading CSV: {exc}")
         st.stop()
 
     # Step 2: Aggregate search terms (20-40%)
     progress_bar.progress(0.25)
     status_text.text(f"Aggregating duplicate search terms... ({len(df_cleaned)} rows)")
+    add_log_entry(f"Aggregating {len(df_cleaned)} search terms...", "info")
     
     df_aggregated = _aggregate_search_terms(df_cleaned)
     duplicates_found = len(df_cleaned) - len(df_aggregated)
     progress_bar.progress(0.35)
     status_text.text(f"Aggregated: {len(df_aggregated)} unique search terms")
+    add_log_entry(f"Aggregated to {len(df_aggregated)} unique search terms ({duplicates_found} duplicates removed)", "success")
     
     # Remove summary rows (after aggregation as requested)
     df_aggregated = _remove_summary_rows(df_aggregated)
     progress_bar.progress(0.40)
     status_text.text(f"Removed summary rows: {len(df_aggregated)} search terms remaining")
+    add_log_entry(f"Removed summary rows: {len(df_aggregated)} search terms remaining", "success")
 
     # Step 3: Extract locations from search terms (40-50%)
     progress_bar.progress(0.45)
     if openai_client:
         status_text.text("Using AI to extract location names from search terms...")
+        add_log_entry(f"Starting AI-powered location extraction from {len(df_aggregated)} search terms...", "info")
     else:
         status_text.text("Extracting location names from search terms...")
+        add_log_entry(f"Starting location extraction from {len(df_aggregated)} search terms (fallback mode)...", "info")
     
-    df_locations, df_without_locations = _extract_locations_from_search_terms(df_aggregated)
+    # Pass progress callbacks to the extraction function
+    df_locations, df_without_locations = _extract_locations_from_search_terms(
+        df_aggregated,
+        progress_callback=lambda p: progress_bar.progress(p),
+        status_callback=lambda msg: status_text.text(msg)
+    )
     locations_found = len(df_locations)
     terms_without_locations_count = len(df_without_locations)
     
     progress_bar.progress(0.50)
     if locations_found > 0:
         status_text.text(f"Extracted {locations_found} unique locations from {len(df_aggregated)} search terms")
+        add_log_entry(f"Location extraction complete: {locations_found} unique locations found, {terms_without_locations_count} terms without locations", "success")
     else:
         progress_bar.empty()
         status_text.empty()
+        add_log_entry("No locations could be extracted from search terms", "warning")
         st.warning(f"⚠️ No locations could be extracted from search terms. Check if search terms contain location names.")
         st.stop()
 
     # Step 4: Validate locations using LLM (50-80%)
     progress_bar.progress(0.55)
     status_text.text(f"Validating {locations_found} locations using AI...")
+    add_log_entry(f"Starting location validation: {locations_found} locations to validate against target area '{target_area}'", "info")
     
     if not openai_client:
         progress_bar.empty()
         status_text.empty()
+        add_log_entry("OpenAI API is required for location validation but is not configured", "error")
         st.error("❌ OpenAI API is required for location validation. Please configure your API key.")
         st.stop()
     
@@ -807,19 +855,30 @@ if run_button and uploaded and target_area.strip():
             time.sleep(throttle)
         
         # Ask LLM if the location is inside the target area
-        is_inside, reasoning = _check_location_inside_target_with_llm(final_location, target_area)
-        audit_entry["inside_target"] = is_inside
-        audit_entry["reasoning"].append(f"Final location: '{final_location}'")
-        audit_entry["reasoning"].append(f"LLM check: {reasoning}")
-        
-        # Determine status
-        if is_inside:
-            status = "keep"
-            audit_entry["status"] = "keep"
-            validated_count += 1
-        else:
+        try:
+            is_inside, reasoning = _check_location_inside_target_with_llm(final_location, target_area)
+            audit_entry["inside_target"] = is_inside
+            audit_entry["reasoning"].append(f"Final location: '{final_location}'")
+            audit_entry["reasoning"].append(f"LLM check: {reasoning}")
+            
+            # Determine status
+            if is_inside:
+                status = "keep"
+                audit_entry["status"] = "keep"
+                validated_count += 1
+                add_log_entry(f"Location '{extracted_location}' is INSIDE target area '{target_area}' (Keep)", "success")
+            else:
+                status = "exclude"
+                audit_entry["status"] = "exclude"
+                unmatched_count += 1
+                add_log_entry(f"Location '{extracted_location}' is OUTSIDE target area '{target_area}' (Exclude)", "warning")
+        except Exception as e:
+            # Handle LLM errors gracefully
+            add_log_entry(f"Error validating location '{extracted_location}': {str(e)}", "error")
             status = "exclude"
             audit_entry["status"] = "exclude"
+            audit_entry["inside_target"] = False
+            audit_entry["reasoning"].append(f"Error: {str(e)}")
             unmatched_count += 1
         
         audit_log.append(audit_entry)
@@ -841,13 +900,20 @@ if run_button and uploaded and target_area.strip():
     if not df_without_locations.empty and openai_client:
         progress_bar.progress(0.80)
         status_text.text("Inferring industry from search terms...")
+        add_log_entry("Inferring industry from search terms...", "info")
         
         # Infer industry from all search terms (sample from aggregated)
         sample_terms = df_aggregated["search_term"].head(20).tolist()
-        industry = _infer_industry_from_search_terms(tuple(sample_terms))
+        try:
+            industry = _infer_industry_from_search_terms(tuple(sample_terms))
+            add_log_entry(f"Inferred industry: {industry}", "success")
+        except Exception as e:
+            add_log_entry(f"Error inferring industry: {str(e)}", "error")
+            industry = "general business"
         
         progress_bar.progress(0.85)
         status_text.text(f"Inferred industry: {industry}. Detecting competitors from {terms_without_locations_count} terms...")
+        add_log_entry(f"Starting competitor detection from {terms_without_locations_count} terms without locations...", "info")
         
         total_terms = len(df_without_locations)
         competitor_count = 0
@@ -867,17 +933,21 @@ if run_button and uploaded and target_area.strip():
                 time.sleep(throttle)
             
             # Identify competitor
-            competitor_name = _identify_competitor_with_llm(search_term, industry)
-            
-            if competitor_name:
-                competitor_records.append({
-                    "competitor_name": competitor_name,
-                    "original_search_term": search_term,
-                    "impressions": impressions,
-                })
-                competitor_count += 1
-                # Update status with new count
-                status_text.text(f"Analyzing term {idx + 1}/{total_terms} for competitors... | Found: {competitor_count}")
+            try:
+                competitor_name = _identify_competitor_with_llm(search_term, industry)
+                
+                if competitor_name:
+                    competitor_records.append({
+                        "competitor_name": competitor_name,
+                        "original_search_term": search_term,
+                        "impressions": impressions,
+                    })
+                    competitor_count += 1
+                    add_log_entry(f"Found competitor: '{competitor_name}' in search term '{search_term}'", "success")
+                    # Update status with new count
+                    status_text.text(f"Analyzing term {idx + 1}/{total_terms} for competitors... | Found: {competitor_count}")
+            except Exception as e:
+                add_log_entry(f"Error analyzing term '{search_term}' for competitors: {str(e)}", "error")
     
     competitor_df = pd.DataFrame(competitor_records) if competitor_records else pd.DataFrame(columns=["competitor_name", "original_search_term", "impressions"])
     
@@ -894,8 +964,9 @@ if run_button and uploaded and target_area.strip():
     # Complete progress
     progress_bar.progress(1.0)
     status_text.text(f"Complete! Processed {total_locations} locations ({validated_count} inside target, {unmatched_count} outside target) | Found {len(agg_competitors)} competitors")
+    add_log_entry(f"Processing complete! Locations: {validated_count} inside, {unmatched_count} outside. Competitors: {len(agg_competitors)}", "success")
     
-    # Clear progress indicators
+    # Clear progress indicators but keep log visible
     progress_bar.empty()
     status_text.empty()
 
