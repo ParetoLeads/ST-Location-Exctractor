@@ -329,92 +329,104 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
     # Try multiple encodings for CSV files (common encodings for Excel/Google Ads exports)
     encodings_to_try = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'cp1252']
     
-    # Try reading with skiprows to handle Google Ads format
-    # Google Ads files often have 2 metadata rows before headers
     df = None
     last_error = None
     
-    try:
-        if is_xlsx:
-            # Read Excel file (encoding not needed for binary Excel files)
+    # Strategy: Try reading with skiprows=2 first (most common for Google Ads files)
+    # If that fails, try reading normally and detect metadata rows
+    if is_xlsx:
+        # For Excel files, try with skiprows first
+        try:
+            uploaded_file.seek(0)
+            df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
+        except Exception:
+            # If skiprows fails, try without skiprows
+            uploaded_file.seek(0)
             df = pd.read_excel(uploaded_file, engine='openpyxl')
-        else:
-            # Read CSV file - try multiple encodings
+            # Check if first row is metadata
+            if len(df) > 0 and len(df.columns) > 0:
+                first_cell = str(df.iloc[0, 0]).lower() if len(df) > 0 else ""
+                first_col = str(df.columns[0]).lower()
+                if "report" in first_col or "report" in first_cell or first_cell == "all time":
+                    # Re-read with skiprows=2
+                    uploaded_file.seek(0)
+                    df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
+    else:
+        # For CSV files, try multiple strategies
+        # Strategy 1: Try reading with skiprows=2 (most common case)
+        for encoding in encodings_to_try:
+            try:
+                uploaded_file.seek(0)
+                # Try with on_bad_lines for newer pandas, fallback to error_bad_lines for older
+                try:
+                    df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, on_bad_lines='skip')
+                except TypeError:
+                    # Older pandas version, use error_bad_lines
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, error_bad_lines=False, warn_bad_lines=False)
+                # Verify we got a reasonable dataframe (has columns and data)
+                if df is not None and len(df.columns) > 0 and len(df) > 0:
+                    break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+            except Exception as e:
+                last_error = e
+                continue
+        
+        # Strategy 2: If skiprows=2 didn't work, try reading normally and detect metadata
+        if df is None or len(df.columns) == 0:
+            df = None
             for encoding in encodings_to_try:
                 try:
                     uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, encoding=encoding)
-                    break  # Success, exit encoding loop
-                except (UnicodeDecodeError, UnicodeError) as e:
-                    last_error = e
-                    continue  # Try next encoding
+                    # Try with on_bad_lines for newer pandas, fallback to error_bad_lines for older
+                    try:
+                        df = pd.read_csv(uploaded_file, encoding=encoding, on_bad_lines='skip')
+                    except TypeError:
+                        # Older pandas version
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(uploaded_file, encoding=encoding, error_bad_lines=False, warn_bad_lines=False)
+                    # Check if first row looks like metadata
+                    if df is not None and len(df) > 0 and len(df.columns) > 0:
+                        first_cell = str(df.iloc[0, 0]).lower() if len(df) > 0 else ""
+                        first_col = str(df.columns[0]).lower()
+                        # If first row/column suggests metadata, re-read with skiprows
+                        if "report" in first_col or "report" in first_cell or first_cell == "all time" or len(df.columns) == 1:
+                            uploaded_file.seek(0)
+                            try:
+                                df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, on_bad_lines='skip')
+                            except TypeError:
+                                uploaded_file.seek(0)
+                                df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, error_bad_lines=False, warn_bad_lines=False)
+                    if df is not None and len(df.columns) > 0:
+                        break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
                 except Exception as e:
-                    # Other errors (not encoding-related), try next encoding anyway
                     last_error = e
                     continue
-            
-            if df is None:
-                # All encodings failed
-                raise ValueError(f"Could not decode CSV file. Tried encodings: {', '.join(encodings_to_try)}. Last error: {str(last_error)}")
         
-        # Check if first row looks like metadata (not column headers)
-        if len(df) > 0:
-            first_col = df.columns[0] if len(df.columns) > 0 else ""
-            first_cell_value = str(df.iloc[0, 0]) if len(df) > 0 else ""
-            if isinstance(first_col, str) and ("report" in first_col.lower() or first_cell_value == "Search terms report"):
-                # Skip first 2 rows and read again
-                uploaded_file.seek(0)  # Reset file pointer
-                if is_xlsx:
-                    df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
-                else:
-                    # Try multiple encodings again for skiprows case
-                    df = None
-                    for encoding in encodings_to_try:
-                        try:
-                            uploaded_file.seek(0)
-                            df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2)
-                            break
-                        except (UnicodeDecodeError, UnicodeError):
-                            continue
-                        except Exception:
-                            continue
-                    
-                    if df is None:
-                        raise ValueError(f"Could not decode CSV file with skiprows. Tried encodings: {', '.join(encodings_to_try)}")
-    except Exception as e:
-        # If that fails, try reading normally (without skiprows)
-        uploaded_file.seek(0)
-        try:
-            if is_xlsx:
-                df = pd.read_excel(uploaded_file, engine='openpyxl')
-            else:
-                # Try multiple encodings for normal read
-                df = None
-                for encoding in encodings_to_try:
-                    try:
-                        uploaded_file.seek(0)
-                        df = pd.read_csv(uploaded_file, encoding=encoding)
-                        break
-                    except (UnicodeDecodeError, UnicodeError):
-                        continue
-                    except Exception:
-                        continue
-                
-                if df is None:
-                    raise ValueError(f"Could not read file. Please ensure it's a valid CSV or XLSX file. Tried encodings: {', '.join(encodings_to_try)}. Error: {str(e)}")
-        except Exception as e2:
-            # If both fail, raise a clear error
-            raise ValueError(f"Could not read file. Please ensure it's a valid CSV or XLSX file. Error: {str(e2)}")
+        if df is None or len(df.columns) == 0:
+            raise ValueError(f"Could not read CSV file. Tried encodings: {', '.join(encodings_to_try)}. Last error: {str(last_error) if last_error else 'Unknown error'}")
     
     # Remove rows that are totals or empty
     if len(df) > 0:
-        # Check for summary rows that start with "Total:" (with or without colon)
-        first_col_str = df.iloc[:, 0].astype(str).str.strip()
-        is_total_row = first_col_str.str.lower().str.startswith("total")
+        # Check all columns for "Total:" rows (not just first column)
+        # A row is a total row if ANY column starts with "Total:"
+        is_total_row = pd.Series([False] * len(df))
+        for col in df.columns:
+            if df[col].dtype == 'object':  # Only check string columns
+                col_str = df[col].astype(str).str.strip()
+                is_total_row = is_total_row | col_str.str.lower().str.startswith("total")
+        
         df = df[~is_total_row]
         
-        # Also remove rows where first column is empty
-        df = df.dropna(subset=[df.columns[0]])
+        # Remove rows where the first column is empty or NaN
+        if len(df.columns) > 0:
+            df = df.dropna(subset=[df.columns[0]])
+            # Also remove rows where first column is empty string
+            first_col = df.columns[0]
+            df = df[df[first_col].astype(str).str.strip() != ""]
     
     return df
 
