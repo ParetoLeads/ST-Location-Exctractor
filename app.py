@@ -1,5 +1,4 @@
 import os
-import re
 import time
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
@@ -117,6 +116,7 @@ def _extract_location_with_llm(search_term: str) -> Optional[str]:
             ],
             temperature=0.1,  # Low temperature for consistent results
             max_tokens=50,
+            timeout=30.0,  # 30 second timeout to prevent hanging
         )
         
         extracted = response.choices[0].message.content.strip()
@@ -195,6 +195,7 @@ def _check_location_inside_target_with_llm(final_location: str, target_area: str
             ],
             temperature=0.1,
             max_tokens=100,
+            timeout=30.0,  # 30 second timeout to prevent hanging
         )
         
         answer = response.choices[0].message.content.strip()
@@ -246,6 +247,7 @@ def _infer_industry_from_search_terms(search_terms_tuple: tuple) -> str:
             ],
             temperature=0.1,
             max_tokens=30,
+            timeout=30.0,  # 30 second timeout to prevent hanging
         )
         
         industry = response.choices[0].message.content.strip()
@@ -290,6 +292,7 @@ def _identify_competitor_with_llm(search_term: str, industry: str) -> Optional[s
             ],
             temperature=0.1,
             max_tokens=50,
+            timeout=30.0,  # 30 second timeout to prevent hanging
         )
         
         result = response.choices[0].message.content.strip()
@@ -323,15 +326,36 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
     
     is_xlsx = file_name.endswith('.xlsx') or file_name.endswith('.xls')
     
+    # Try multiple encodings for CSV files (common encodings for Excel/Google Ads exports)
+    encodings_to_try = ['utf-8', 'utf-16', 'utf-16-le', 'latin-1', 'cp1252']
+    
     # Try reading with skiprows to handle Google Ads format
     # Google Ads files often have 2 metadata rows before headers
+    df = None
+    last_error = None
+    
     try:
         if is_xlsx:
-            # Read Excel file
+            # Read Excel file (encoding not needed for binary Excel files)
             df = pd.read_excel(uploaded_file, engine='openpyxl')
         else:
-            # Read CSV file
-            df = pd.read_csv(uploaded_file)
+            # Read CSV file - try multiple encodings
+            for encoding in encodings_to_try:
+                try:
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, encoding=encoding)
+                    break  # Success, exit encoding loop
+                except (UnicodeDecodeError, UnicodeError) as e:
+                    last_error = e
+                    continue  # Try next encoding
+                except Exception as e:
+                    # Other errors (not encoding-related), try next encoding anyway
+                    last_error = e
+                    continue
+            
+            if df is None:
+                # All encodings failed
+                raise ValueError(f"Could not decode CSV file. Tried encodings: {', '.join(encodings_to_try)}. Last error: {str(last_error)}")
         
         # Check if first row looks like metadata (not column headers)
         if len(df) > 0:
@@ -343,15 +367,41 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
                 if is_xlsx:
                     df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
                 else:
-                    df = pd.read_csv(uploaded_file, skiprows=2)
+                    # Try multiple encodings again for skiprows case
+                    df = None
+                    for encoding in encodings_to_try:
+                        try:
+                            uploaded_file.seek(0)
+                            df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2)
+                            break
+                        except (UnicodeDecodeError, UnicodeError):
+                            continue
+                        except Exception:
+                            continue
+                    
+                    if df is None:
+                        raise ValueError(f"Could not decode CSV file with skiprows. Tried encodings: {', '.join(encodings_to_try)}")
     except Exception as e:
-        # If that fails, try reading normally
+        # If that fails, try reading normally (without skiprows)
         uploaded_file.seek(0)
         try:
             if is_xlsx:
                 df = pd.read_excel(uploaded_file, engine='openpyxl')
             else:
-                df = pd.read_csv(uploaded_file)
+                # Try multiple encodings for normal read
+                df = None
+                for encoding in encodings_to_try:
+                    try:
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(uploaded_file, encoding=encoding)
+                        break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+                    except Exception:
+                        continue
+                
+                if df is None:
+                    raise ValueError(f"Could not read file. Please ensure it's a valid CSV or XLSX file. Tried encodings: {', '.join(encodings_to_try)}. Error: {str(e)}")
         except Exception as e2:
             # If both fail, raise a clear error
             raise ValueError(f"Could not read file. Please ensure it's a valid CSV or XLSX file. Error: {str(e2)}")
@@ -580,137 +630,6 @@ st.markdown("""
     /* Style the Run button with orange color */
     button[data-testid="stBaseButton-primary"],
     button[data-testid="baseButton-primary"],
-    button[kind="primary"] {
-        background-color: #ff6603 !important;
-        border-color: #ff6603 !important;
-        color: white !important;
-    }
-    
-    button[data-testid="stBaseButton-primary"]:hover,
-    button[data-testid="baseButton-primary"]:hover,
-    button[kind="primary"]:hover {
-        background-color: #e55a00 !important;
-        border-color: #e55a00 !important;
-    }
-    
-    button[data-testid="stBaseButton-primary"]:active,
-    button[data-testid="baseButton-primary"]:active,
-    button[kind="primary"]:active {
-        background-color: #cc4f00 !important;
-        border-color: #cc4f00 !important;
-    }
-</style>
-<script>
-    // Enhanced drag-over handler
-    function setupDragOver() {
-        const dropZone = document.querySelector('section[data-testid="stFileUploaderDropzone"]');
-        
-        if (dropZone && !dropZone.hasAttribute('data-drag-setup')) {
-            dropZone.setAttribute('data-drag-setup', 'true');
-            
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                }, false);
-            });
-            
-            ['dragenter', 'dragover'].forEach(eventName => {
-                dropZone.addEventListener(eventName, function(e) {
-                    this.classList.add('drag-over');
-                }, false);
-            });
-            
-            ['dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, function(e) {
-                    this.classList.remove('drag-over');
-                }, false);
-            });
-        }
-    }
-    
-    // Run immediately
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', setupDragOver);
-    } else {
-        setupDragOver();
-    }
-    
-    // Watch for Streamlit re-renders
-    const observer = new MutationObserver(function(mutations) {
-        setupDragOver();
-    });
-    
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-    
-    setInterval(setupDragOver, 500);
-</script>
-""", unsafe_allow_html=True)
-
-# Main input widgets
-st.markdown("### Upload File")
-uploaded = st.file_uploader(
-    "",
-    type=["csv", "xlsx"],
-    label_visibility="collapsed"
-)
-
-# Inject CSS right after file uploader to ensure it applies
-st.markdown("""
-<style>
-    /* Force the drop zone section to be 450px tall */
-    section[data-testid="stFileUploaderDropzone"] {
-        height: 450px !important;
-        min-height: 450px !important;
-    }
-    section[data-testid="stFileUploaderDropzone"].drag-over {
-        border-color: #1f77b4 !important;
-        background-color: rgba(31, 119, 180, 0.15) !important;
-        box-shadow: 0 0 20px rgba(31, 119, 180, 0.3) !important;
-    }
-    
-    /* Hide original text and show custom text via CSS */
-    section[data-testid="stFileUploaderDropzone"] .e16n7gab4 {
-        font-size: 0 !important;
-        color: transparent !important;
-    }
-    section[data-testid="stFileUploaderDropzone"] .e16n7gab4::after {
-        content: 'Supported Files: CSV, XLSX' !important;
-        font-size: 14px !important;
-        color: #6b7280 !important;
-    }
-    
-    /* Add margin above button */
-    section[data-testid="stFileUploaderDropzone"] > .e16n7gab6 {
-        margin-top: 20px !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("### Target Area")
-target_area = st.text_input(
-    "Target area (city/region/country)",
-    value="City, Country",
-    help="Enter the target area you want to filter locations for (e.g., 'Adelaide, Australia')"
-)
-
-# Advanced settings in sidebar
-with st.sidebar.expander("⚙️ Advanced Settings"):
-    throttle = st.slider("LLM API pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
-
-# Run button
-st.markdown("### Run Analysis")
-run_button = st.button("🚀 Run", type="primary", use_container_width=True)
-
-# Inject CSS to style the Run button with orange color
-st.markdown("""
-<style>
-    /* Target primary buttons (Run button) */
-    button[data-testid="stBaseButton-primary"],
-    button[data-testid="baseButton-primary"],
     button[kind="primary"],
     .stButton > button[kind="primary"] {
         background-color: #ff6603 !important;
@@ -735,6 +654,29 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# Main input widgets
+st.markdown("### Upload File")
+uploaded = st.file_uploader(
+    "",
+    type=["csv", "xlsx"],
+    label_visibility="collapsed"
+)
+
+st.markdown("### Target Area")
+target_area = st.text_input(
+    "Target area (city/region/country)",
+    value="City, Country",
+    help="Enter the target area you want to filter locations for (e.g., 'Adelaide, Australia')"
+)
+
+# Advanced settings in sidebar
+with st.sidebar.expander("⚙️ Advanced Settings"):
+    throttle = st.slider("LLM API pause (seconds) to ease rate limits", 0.0, 2.0, 0.2, 0.1)
+
+# Run button
+st.markdown("### Run Analysis")
+run_button = st.button("🚀 Run", type="primary", use_container_width=True)
 
 # Note: Technical Details & Status has been moved to the Audit Log section below
 # (Only shown when processing is complete)
@@ -843,8 +785,8 @@ if run_button and uploaded and target_area.strip():
         audit_entry["final_location"] = final_location
         
         # Update progress (55% to 80%)
-        location_progress = (idx + 1) / total_locations
-        overall_progress = 0.55 + (location_progress * 0.25)
+        location_progress = (idx + 1) / total_locations if total_locations > 0 else 1.0
+        overall_progress = min(0.55 + (location_progress * 0.25), 0.80)
         progress_bar.progress(overall_progress)
         status_text.text(f"Validating location {idx + 1}/{total_locations}: {extracted_location} | Inside: {validated_count} | Outside: {unmatched_count}")
         
@@ -883,6 +825,7 @@ if run_button and uploaded and target_area.strip():
     
     # Step 5: Detect competitors from terms without locations (80-100%)
     competitor_records = []
+    industry = "N/A"  # Initialize to default value to avoid scope issues
     if not df_without_locations.empty and openai_client:
         progress_bar.progress(0.80)
         status_text.text("Inferring industry from search terms...")
@@ -902,8 +845,8 @@ if run_button and uploaded and target_area.strip():
             impressions = row["impressions"]
             
             # Update progress (85% to 100%)
-            term_progress = (idx + 1) / total_terms
-            overall_progress = 0.85 + (term_progress * 0.15)
+            term_progress = (idx + 1) / total_terms if total_terms > 0 else 1.0
+            overall_progress = min(0.85 + (term_progress * 0.15), 1.0)
             progress_bar.progress(overall_progress)
             status_text.text(f"Analyzing term {idx + 1}/{total_terms} for competitors... | Found: {competitor_count}")
             
@@ -1108,7 +1051,7 @@ if run_button and uploaded and target_area.strip():
         log_sections.append("=" * 80)
         log_sections.append("COMPETITOR DETECTION LOG")
         log_sections.append("=" * 80)
-        log_sections.append(f"Inferred Industry: {industry if 'industry' in locals() else 'N/A'}")
+        log_sections.append(f"Inferred Industry: {industry}")
         log_sections.append(f"Terms Analyzed: {terms_without_locations_count}")
         log_sections.append(f"Competitors Found: {len(agg_competitors)}")
         log_sections.append("")
@@ -1161,102 +1104,5 @@ if run_button and uploaded and target_area.strip():
             label_visibility="collapsed"
         )
         
-        # Copy button using JavaScript
-        st.markdown("""
-        <script>
-            function setupAuditCopyButton() {
-                const textarea = document.querySelector('textarea[data-testid="complete_audit_log_display"]');
-                if (textarea) {
-                    let copyBtn = document.getElementById('copy-audit-log-js-btn');
-                    if (!copyBtn) {
-                        copyBtn = document.createElement('button');
-                        copyBtn.id = 'copy-audit-log-js-btn';
-                        copyBtn.innerHTML = '📋 Copy to Clipboard';
-                        copyBtn.style.cssText = 'margin-top: 10px; padding: 10px 20px; background-color: #ff6603; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; width: 100%;';
-                        
-                        copyBtn.onclick = function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const text = textarea.value;
-                            
-                            if (navigator.clipboard && navigator.clipboard.writeText) {
-                                navigator.clipboard.writeText(text).then(function() {
-                                    copyBtn.innerHTML = '✅ Copied to Clipboard!';
-                                    copyBtn.style.backgroundColor = '#28a745';
-                                    setTimeout(function() {
-                                        copyBtn.innerHTML = '📋 Copy to Clipboard';
-                                        copyBtn.style.backgroundColor = '#ff6603';
-                                    }, 2000);
-                                }).catch(function(err) {
-                                    copyBtn.innerHTML = '❌ Copy Failed';
-                                    copyBtn.style.backgroundColor = '#dc3545';
-                                    setTimeout(function() {
-                                        copyBtn.innerHTML = '📋 Copy to Clipboard';
-                                        copyBtn.style.backgroundColor = '#ff6603';
-                                    }, 2000);
-                                });
-                            } else {
-                                const textArea = document.createElement('textarea');
-                                textArea.value = text;
-                                textArea.style.position = 'fixed';
-                                textArea.style.opacity = '0';
-                                document.body.appendChild(textArea);
-                                textArea.focus();
-                                textArea.select();
-                                try {
-                                    const successful = document.execCommand('copy');
-                                    if (successful) {
-                                        copyBtn.innerHTML = '✅ Copied to Clipboard!';
-                                        copyBtn.style.backgroundColor = '#28a745';
-                                        setTimeout(function() {
-                                            copyBtn.innerHTML = '📋 Copy to Clipboard';
-                                            copyBtn.style.backgroundColor = '#ff6603';
-                                        }, 2000);
-                                    } else {
-                                        copyBtn.innerHTML = '❌ Copy Failed';
-                                        copyBtn.style.backgroundColor = '#dc3545';
-                                        setTimeout(function() {
-                                            copyBtn.innerHTML = '📋 Copy to Clipboard';
-                                            copyBtn.style.backgroundColor = '#ff6603';
-                                        }, 2000);
-                                    }
-                                } catch (err) {
-                                    copyBtn.innerHTML = '❌ Copy Failed';
-                                    copyBtn.style.backgroundColor = '#dc3545';
-                                    setTimeout(function() {
-                                        copyBtn.innerHTML = '📋 Copy to Clipboard';
-                                        copyBtn.style.backgroundColor = '#ff6603';
-                                    }, 2000);
-                                }
-                                document.body.removeChild(textArea);
-                            }
-                        };
-                        
-                        const textareaContainer = textarea.closest('.stTextArea');
-                        if (textareaContainer) {
-                            textareaContainer.appendChild(copyBtn);
-                        } else if (textarea.parentElement) {
-                            textarea.parentElement.appendChild(copyBtn);
-                        }
-                    }
-                }
-            }
-            
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', setupAuditCopyButton);
-            } else {
-                setupAuditCopyButton();
-            }
-            
-            const observer = new MutationObserver(function(mutations) {
-                setupAuditCopyButton();
-            });
-            
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-            
-            setInterval(setupAuditCopyButton, 1000);
-        </script>
-        """, unsafe_allow_html=True)
+        # Note: Users can manually select and copy text from the textarea above
+        st.caption("💡 Tip: Select all text in the box above (Ctrl+A / Cmd+A) and copy (Ctrl+C / Cmd+C) to copy the audit log.")
