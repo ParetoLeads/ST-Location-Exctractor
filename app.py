@@ -736,7 +736,7 @@ if run_button and uploaded and target_area.strip():
         if len(log_entries) > 50:
             log_entries.pop(0)
         # Update the log display
-        log_container.text_area("", value="\n".join(log_entries), height=200, key="realtime_log", label_visibility="collapsed")
+        log_container.text_area("", value="\n".join(log_entries), height=200, label_visibility="collapsed")
     
     # Step 1: Read and clean CSV (0-20%)
     status_text.text("Reading and cleaning CSV file...")
