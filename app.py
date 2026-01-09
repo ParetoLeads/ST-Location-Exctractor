@@ -312,6 +312,31 @@ def _identify_competitor_with_llm(search_term: str, industry: str) -> Optional[s
         return None
 
 
+def _has_valid_headers(df: pd.DataFrame) -> bool:
+    """Check if dataframe has columns that look like search term and impressions headers."""
+    if df is None or len(df.columns) == 0:
+        return False
+    
+    # Normalize column names for checking (same logic as _standardize_columns)
+    col_names_normalized = {str(c).strip().lower(): c for c in df.columns}
+    
+    # Check for search term column (exact match after normalization, same as _standardize_columns)
+    search_term_candidates = ["search_term", "search term", "term", "query", "search terms", "searchterm"]
+    search_term_found = any(
+        candidate.strip().lower() in col_names_normalized
+        for candidate in search_term_candidates
+    )
+    
+    # Check for impressions column (exact match after normalization, same as _standardize_columns)
+    impressions_candidates = ["impressions", "impr", "impression", "impr.", "imp"]
+    impressions_found = any(
+        candidate.strip().lower() in col_names_normalized
+        for candidate in impressions_candidates
+    )
+    
+    return search_term_found and impressions_found
+
+
 def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
     """Read CSV or XLSX file, handling Google Ads format with metadata rows."""
     # Determine file type from extension or content type
@@ -332,72 +357,65 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
     df = None
     last_error = None
     
-    # Strategy: Try reading with skiprows=2 first (most common for Google Ads files)
-    # If that fails, try reading normally and detect metadata rows
+    # Strategy: Try different skiprows values (0-10) to find the actual header row
+    # Validate each attempt to ensure we found valid headers
     if is_xlsx:
-        # For Excel files, try with skiprows first
-        try:
-            uploaded_file.seek(0)
-            df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
-        except Exception:
-            # If skiprows fails, try without skiprows
-            uploaded_file.seek(0)
-            df = pd.read_excel(uploaded_file, engine='openpyxl')
-            # Check if first row is metadata
-            if len(df) > 0 and len(df.columns) > 0:
-                first_cell = str(df.iloc[0, 0]).lower() if len(df) > 0 else ""
-                first_col = str(df.columns[0]).lower()
-                if "report" in first_col or "report" in first_cell or first_cell == "all time":
-                    # Re-read with skiprows=2
-                    uploaded_file.seek(0)
-                    df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=2)
-    else:
-        # For CSV files, try multiple strategies
-        # Strategy 1: Try reading with skiprows=2 (most common case)
-        for encoding in encodings_to_try:
+        # For Excel files, try different skiprows values
+        for skiprows in range(0, 11):  # Try 0 through 10
             try:
                 uploaded_file.seek(0)
-                # Try with on_bad_lines for newer pandas, fallback to error_bad_lines for older
-                try:
-                    df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, on_bad_lines='skip')
-                except TypeError:
-                    # Older pandas version, use error_bad_lines
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, error_bad_lines=False, warn_bad_lines=False)
-                # Verify we got a reasonable dataframe (has columns and data)
-                if df is not None and len(df.columns) > 0 and len(df) > 0:
+                test_df = pd.read_excel(uploaded_file, engine='openpyxl', skiprows=skiprows)
+                if _has_valid_headers(test_df) and len(test_df) > 0:
+                    df = test_df
                     break
-            except (UnicodeDecodeError, UnicodeError):
-                continue
-            except Exception as e:
-                last_error = e
+            except Exception:
                 continue
         
-        # Strategy 2: If skiprows=2 didn't work, try reading normally and detect metadata
-        if df is None or len(df.columns) == 0:
-            df = None
-            for encoding in encodings_to_try:
+        # If no valid headers found, try without skiprows as fallback
+        if df is None or not _has_valid_headers(df):
+            try:
+                uploaded_file.seek(0)
+                df = pd.read_excel(uploaded_file, engine='openpyxl')
+            except Exception as e:
+                last_error = e
+    else:
+        # For CSV files, try different skiprows values with each encoding
+        for encoding in encodings_to_try:
+            for skiprows in range(0, 11):  # Try 0 through 10
                 try:
                     uploaded_file.seek(0)
                     # Try with on_bad_lines for newer pandas, fallback to error_bad_lines for older
                     try:
+                        test_df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=skiprows, on_bad_lines='skip')
+                    except TypeError:
+                        # Older pandas version, use error_bad_lines
+                        uploaded_file.seek(0)
+                        test_df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=skiprows, error_bad_lines=False, warn_bad_lines=False)
+                    
+                    # Validate that we have valid headers and data
+                    if _has_valid_headers(test_df) and len(test_df) > 0:
+                        df = test_df
+                        break
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+                except Exception as e:
+                    last_error = e
+                    continue
+            
+            # If we found valid headers, stop trying other encodings
+            if df is not None and _has_valid_headers(df):
+                break
+        
+        # If still no valid dataframe, try one more time without skiprows validation (last resort)
+        if df is None or not _has_valid_headers(df):
+            for encoding in encodings_to_try:
+                try:
+                    uploaded_file.seek(0)
+                    try:
                         df = pd.read_csv(uploaded_file, encoding=encoding, on_bad_lines='skip')
                     except TypeError:
-                        # Older pandas version
                         uploaded_file.seek(0)
                         df = pd.read_csv(uploaded_file, encoding=encoding, error_bad_lines=False, warn_bad_lines=False)
-                    # Check if first row looks like metadata
-                    if df is not None and len(df) > 0 and len(df.columns) > 0:
-                        first_cell = str(df.iloc[0, 0]).lower() if len(df) > 0 else ""
-                        first_col = str(df.columns[0]).lower()
-                        # If first row/column suggests metadata, re-read with skiprows
-                        if "report" in first_col or "report" in first_cell or first_cell == "all time" or len(df.columns) == 1:
-                            uploaded_file.seek(0)
-                            try:
-                                df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, on_bad_lines='skip')
-                            except TypeError:
-                                uploaded_file.seek(0)
-                                df = pd.read_csv(uploaded_file, encoding=encoding, skiprows=2, error_bad_lines=False, warn_bad_lines=False)
                     if df is not None and len(df.columns) > 0:
                         break
                 except (UnicodeDecodeError, UnicodeError):
@@ -405,9 +423,18 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
                 except Exception as e:
                     last_error = e
                     continue
-        
-        if df is None or len(df.columns) == 0:
-            raise ValueError(f"Could not read CSV file. Tried encodings: {', '.join(encodings_to_try)}. Last error: {str(last_error) if last_error else 'Unknown error'}")
+    
+    # Final validation
+    if df is None or len(df.columns) == 0:
+        raise ValueError(f"Could not read file. Tried encodings: {', '.join(encodings_to_try)}. Last error: {str(last_error) if last_error else 'Unknown error'}")
+    
+    if not _has_valid_headers(df):
+        available_cols = ", ".join([str(c) for c in df.columns[:5]])
+        raise ValueError(
+            f"Could not find valid header row. Found columns: {available_cols}...\n"
+            f"Expected columns: 'Search term' (or 'search_term') and 'Impr.' (or 'impressions').\n"
+            f"The file may have an unusual format. Please check that it's a valid Google Ads search terms report."
+        )
     
     # Remove rows that are totals or empty
     if len(df) > 0:
