@@ -428,24 +428,34 @@ def _read_and_clean_csv(uploaded_file) -> pd.DataFrame:
             first_col = df.columns[0]
             df = df[df[first_col].astype(str).str.strip() != ""]
     
+    # Defensive: Ensure all column names are strings to prevent type errors downstream
+    if len(df.columns) > 0:
+        df.columns = [str(c).strip() for c in df.columns]
+    
     return df
 
 
 def _standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize column names and extract search_term and impressions."""
-    lowered = {c: c.lower() for c in df.columns}
+    # Defensive: Ensure all column names are strings to prevent type errors
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    # Create normalized lookup dictionary (strip and lower for flexible matching)
+    lowered = {c: str(c).strip().lower() for c in df.columns}
     col_map: Dict[str, str] = {}
 
-    # Find search term column
-    for candidate in ["search_term", "search term", "term", "query"]:
-        match = next((c for c in df.columns if lowered[c] == candidate), None)
+    # Find search term column (with flexible matching - strip whitespace from candidates too)
+    for candidate in ["search_term", "search term", "term", "query", "search terms", "searchterm"]:
+        candidate_normalized = candidate.strip().lower()
+        match = next((c for c in df.columns if lowered[c] == candidate_normalized), None)
         if match:
             col_map[match] = "search_term"
             break
     
-    # Find impressions column
-    for candidate in ["impressions", "impr", "impression", "impr."]:
-        match = next((c for c in df.columns if lowered[c] == candidate), None)
+    # Find impressions column (with flexible matching - strip whitespace from candidates too)
+    for candidate in ["impressions", "impr", "impression", "impr.", "imp"]:
+        candidate_normalized = candidate.strip().lower()
+        match = next((c for c in df.columns if lowered[c] == candidate_normalized), None)
         if match:
             col_map[match] = "impressions"
             break
