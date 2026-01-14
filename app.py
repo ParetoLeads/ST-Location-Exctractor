@@ -77,7 +77,7 @@ if uploaded_file is not None:
     
     if file_size > max_size:
         st.error(f"❌ File size ({file_size / 1024 / 1024:.2f} MB) exceeds the 1MB limit. Please upload a smaller KMZ file.")
-    elif st.button("🚀 Start Analysis", type="primary", use_container_width=True, disabled=st.session_state.processing):
+    elif st.button("🚀 Start Analysis", type="primary", disabled=st.session_state.processing):
         st.session_state.processing = True
         st.session_state.results = None
         st.session_state.excel_data = None
@@ -275,7 +275,7 @@ if st.session_state.results is not None:
         if len(map_data) > 0:
             # Rename columns for st.map (needs lat/lon)
             map_data.columns = ['lat', 'lon', 'name']
-            st.map(map_data, use_container_width=True)
+            st.map(map_data)
         else:
             st.info("No location coordinates available for mapping.")
     
@@ -305,8 +305,14 @@ if st.session_state.results is not None:
             pop_data = df[df['final_population'] > 0]['final_population']
             if len(pop_data) > 0:
                 st.write("**Population Distribution**")
-                # Create bins for histogram
-                st.histogram_chart(pop_data)
+                # Create histogram using pandas cut and bar chart
+                try:
+                    bins = pd.cut(pop_data, bins=10, precision=0)
+                    hist_data = bins.value_counts().sort_index()
+                    st.bar_chart(hist_data)
+                except:
+                    # Fallback to simple bar chart of population values
+                    st.bar_chart(pop_data.head(20))
         
         # Top locations by population
         if 'final_population' in df.columns and 'name' in df.columns:
@@ -316,7 +322,7 @@ if st.session_state.results is not None:
                 top_locations_display = top_locations.copy()
                 top_locations_display['final_population'] = top_locations_display['final_population'].apply(lambda x: f"{int(x):,}")
                 top_locations_display.columns = ['Location', 'Population']
-                st.dataframe(top_locations_display, use_container_width=True, hide_index=True)
+                st.dataframe(top_locations_display, width='stretch', hide_index=True)
     
     # Add search/filter
     st.subheader("📍 Location Data")
@@ -328,7 +334,7 @@ if st.session_state.results is not None:
     # Display table with sorting
     st.dataframe(
         df_display,
-        use_container_width=True,
+        width='stretch',
         height=400,
         hide_index=True
     )
@@ -340,7 +346,7 @@ if st.session_state.results is not None:
             data=st.session_state.excel_data,
             file_name=f"{uploaded_file.name.replace('.kmz', '')}_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            width='stretch'
         )
 
 # Footer
