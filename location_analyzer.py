@@ -913,8 +913,8 @@ class LocationAnalyzer:
             all_locations = self.clean_and_deduplicate_locations(all_locations)
             
             self._log("\n--- Retrieving Administrative Boundaries ---")
-            # Reduce batch size to avoid rate limiting
-            batch_size = 5  # Smaller batches to reduce API load
+            # Batch size matches GPT chunk size to reduce number of API calls
+            batch_size = 10  # Match GPT chunk size to reduce number of batches
             total_batches = (len(all_locations) + batch_size - 1) // batch_size
             for i in range(0, len(all_locations), batch_size):
                 batch = all_locations[i:i + batch_size]
