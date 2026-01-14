@@ -219,8 +219,6 @@ if st.session_state.results is not None:
         'type',
         'latitude',
         'longitude',
-        'admin_hierarchy_parent_name',
-        'admin_hierarchy_level_4_name',
         'gpt_population',
         'gpt_confidence',
         'final_population',
@@ -266,63 +264,6 @@ if st.session_state.results is not None:
     with col4:
         clean_count = ((df['final_population'] > 10000).sum() if 'final_population' in df.columns else 0)
         st.metric("Locations > 10K", clean_count)
-    
-    # Interactive Map
-    if 'latitude' in df.columns and 'longitude' in df.columns:
-        st.subheader("🗺️ Location Map")
-        map_data = df[['latitude', 'longitude', 'name']].copy()
-        map_data = map_data.dropna(subset=['latitude', 'longitude'])
-        if len(map_data) > 0:
-            # Rename columns for st.map (needs lat/lon)
-            map_data.columns = ['lat', 'lon', 'name']
-            st.map(map_data)
-        else:
-            st.info("No location coordinates available for mapping.")
-    
-    # Visualizations
-    st.subheader("📊 Statistics & Visualizations")
-    
-    viz_col1, viz_col2 = st.columns(2)
-    
-    with viz_col1:
-        # Location type breakdown
-        if 'Type' in df.columns:
-            type_counts = df['type'].value_counts()
-            if len(type_counts) > 0:
-                st.write("**Location Types**")
-                st.bar_chart(type_counts)
-        
-        # Confidence level breakdown
-        if 'gpt_confidence' in df.columns:
-            conf_counts = df['gpt_confidence'].value_counts()
-            if len(conf_counts) > 0:
-                st.write("**Confidence Levels**")
-                st.bar_chart(conf_counts)
-    
-    with viz_col2:
-        # Population distribution (for locations with population)
-        if 'final_population' in df.columns:
-            pop_data = df[df['final_population'] > 0]['final_population']
-            if len(pop_data) > 0:
-                st.write("**Population Distribution**")
-                # Create histogram using pandas cut and bar chart
-                try:
-                    bins = pd.cut(pop_data, bins=10, precision=0)
-                    hist_data = bins.value_counts().sort_index()
-                    st.bar_chart(hist_data)
-                except:
-                    # Fallback to simple bar chart of population values
-                    st.bar_chart(pop_data.head(20))
-        
-        # Top locations by population
-        if 'final_population' in df.columns and 'name' in df.columns:
-            top_locations = df[df['final_population'] > 0].nlargest(10, 'final_population')[['name', 'final_population']]
-            if len(top_locations) > 0:
-                st.write("**Top 10 Locations by Population**")
-                top_locations_display = top_locations.copy()
-                top_locations_display['final_population'] = top_locations_display['final_population'].apply(lambda x: f"{int(x):,}")
-                top_locations_display.columns = ['Location', 'Population']
-                st.dataframe(top_locations_display, width='stretch', hide_index=True)
     
     # Add search/filter
     st.subheader("📍 Location Data")
