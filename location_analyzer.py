@@ -104,7 +104,7 @@ class LocationAnalyzer:
     
     def extract_boundary_from_kmz(self) -> List[Tuple[float, float]]:
         """Extract boundary coordinates from KMZ file."""
-        self._log(f"Extracting boundary from KMZ file: {self.kmz_file}")
+        self._log(f"Parsing KMZ boundary file: {self.kmz_file}")
         
         try:
             with zipfile.ZipFile(self.kmz_file, 'r') as kmz:
@@ -403,15 +403,51 @@ class LocationAnalyzer:
         else:
             raise ValueError(f"Invalid query_type: {query_type}")
         
-        try:
-            response = requests.post(self.overpass_url, data=query)
-            response.raise_for_status()
-            data = response.json()
-            
-            return self._process_osm_results(data, place_types, skip_city_block)
-        except Exception as e:
-            self._log(f"Error querying OpenStreetMap for {query_type} locations: {str(e)}")
-            return []
+        # Retry logic for OSM queries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(self.overpass_url, data=query, timeout=DEFAULT_API_TIMEOUT + 10)
+                response.raise_for_status()
+                data = response.json()
+                
+                return self._process_osm_results(data, place_types, skip_city_block)
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:  # Too Many Requests
+                    wait_time = (2 ** attempt) * 2
+                    if attempt < max_retries - 1:
+                        self._log(f"Rate limited (429) for {query_type} query. Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        self._log(f"Error: Rate limited after {max_retries} attempts for {query_type} locations.")
+                        return []
+                elif e.response.status_code == 504:  # Gateway Timeout
+                    wait_time = (2 ** attempt) * 3
+                    if attempt < max_retries - 1:
+                        self._log(f"Gateway timeout (504) for {query_type} query. Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        self._log(f"Error: Gateway timeout after {max_retries} attempts for {query_type} locations.")
+                        return []
+                else:
+                    self._log(f"Error querying OpenStreetMap for {query_type} locations: {str(e)}")
+                    return []
+            except requests.exceptions.Timeout:
+                wait_time = (2 ** attempt) * 3
+                if attempt < max_retries - 1:
+                    self._log(f"Request timeout for {query_type} query. Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    self._log(f"Error: Request timeout after {max_retries} attempts for {query_type} locations.")
+                    return []
+            except Exception as e:
+                self._log(f"Error querying OpenStreetMap for {query_type} locations: {str(e)}")
+                return []
+        
+        return []
     
     def clean_and_deduplicate_locations(self, locations: List[Dict]) -> List[Dict]:
         """Clean location names and remove duplicates."""
@@ -430,8 +466,8 @@ class LocationAnalyzer:
                 
         return unique_locations
     
-    def _fetch_admin_hierarchy_batch(self, locations: List[Dict]) -> List[Dict]:
-        """Get administrative hierarchy for multiple locations in a single batch request."""
+    def _fetch_admin_hierarchy_batch(self, locations: List[Dict], max_retries: int = 3) -> List[Dict]:
+        """Get administrative hierarchy for multiple locations in a single batch request with retry logic."""
         if not locations:
             return locations
 
@@ -452,51 +488,104 @@ class LocationAnalyzer:
         out tags;
         """
         
-        try:
-            response = requests.post(self.overpass_url, data=query, timeout=DEFAULT_API_TIMEOUT)
-            response.raise_for_status()
-            data = response.json()
-            
-            for i, location in enumerate(locations):
-                lat = location.get('latitude')
-                lon = location.get('longitude')
-                if lat is None or lon is None:
+        # Retry logic with exponential backoff
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(self.overpass_url, data=query, timeout=DEFAULT_API_TIMEOUT + 10)
+                response.raise_for_status()
+                data = response.json()
+                
+                for i, location in enumerate(locations):
+                    lat = location.get('latitude')
+                    lon = location.get('longitude')
+                    if lat is None or lon is None:
+                        continue
+
+                    hierarchy = {f'level_{level}_name': None for level in [8, 6, 4, 2]}
+                    hierarchy['containing_level'] = None
+                    hierarchy['parent_level'] = None
+                    hierarchy['parent_name'] = None
+
+                    found_levels = {}
+                    for element in data.get('elements', []):
+                        tags = element.get('tags', {})
+                        level_str = tags.get('admin_level')
+                        name = tags.get('name') or tags.get('name:en')
+                        if level_str and name and level_str.isdigit():
+                            level = int(level_str)
+                            level_key = f'level_{level}_name'
+                            if level_key in hierarchy:
+                                hierarchy[level_key] = name
+                                found_levels[level] = name
+
+                    sorted_found_levels = sorted(found_levels.keys(), reverse=True)
+                    if sorted_found_levels:
+                        hierarchy['containing_level'] = sorted_found_levels[0]
+                        if len(sorted_found_levels) > 1:
+                            hierarchy['parent_level'] = sorted_found_levels[1]
+                            hierarchy['parent_name'] = found_levels.get(sorted_found_levels[1])
+
+                    location['admin_hierarchy'] = hierarchy
+
+                return locations
+                
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:  # Too Many Requests
+                    wait_time = (2 ** attempt) * 2  # Exponential backoff: 2s, 4s, 8s
+                    if attempt < max_retries - 1:
+                        self._log(f"Rate limited (429). Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        self._log(f"Warning: Rate limited after {max_retries} attempts. Skipping hierarchy for this batch.")
+                        return locations
+                elif e.response.status_code == 504:  # Gateway Timeout
+                    wait_time = (2 ** attempt) * 3  # Longer wait for timeouts: 3s, 6s, 12s
+                    if attempt < max_retries - 1:
+                        self._log(f"Gateway timeout (504). Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        self._log(f"Warning: Gateway timeout after {max_retries} attempts. Skipping hierarchy for this batch.")
+                        return locations
+                else:
+                    wait_time = (2 ** attempt) * 2
+                    if attempt < max_retries - 1:
+                        self._log(f"HTTP error {e.response.status_code}. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        self._log(f"Warning: HTTP error {e.response.status_code} after {max_retries} attempts. Skipping hierarchy for this batch: {str(e)}")
+                        return locations
+            except requests.exceptions.Timeout:
+                wait_time = (2 ** attempt) * 3
+                if attempt < max_retries - 1:
+                    self._log(f"Request timeout. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
                     continue
-
-                hierarchy = {f'level_{level}_name': None for level in [8, 6, 4, 2]}
-                hierarchy['containing_level'] = None
-                hierarchy['parent_level'] = None
-                hierarchy['parent_name'] = None
-
-                found_levels = {}
-                for element in data.get('elements', []):
-                    tags = element.get('tags', {})
-                    level_str = tags.get('admin_level')
-                    name = tags.get('name') or tags.get('name:en')
-                    if level_str and name and level_str.isdigit():
-                        level = int(level_str)
-                        level_key = f'level_{level}_name'
-                        if level_key in hierarchy:
-                            hierarchy[level_key] = name
-                            found_levels[level] = name
-
-                sorted_found_levels = sorted(found_levels.keys(), reverse=True)
-                if sorted_found_levels:
-                    hierarchy['containing_level'] = sorted_found_levels[0]
-                    if len(sorted_found_levels) > 1:
-                        hierarchy['parent_level'] = sorted_found_levels[1]
-                        hierarchy['parent_name'] = found_levels.get(sorted_found_levels[1])
-
-                location['admin_hierarchy'] = hierarchy
-
-            return locations
-            
-        except requests.exceptions.RequestException as e:
-            self._log(f"Warning: Failed to fetch hierarchy batch: {str(e)}")
-            return locations
-        except Exception as e:
-            self._log(f"Warning: Unexpected error fetching hierarchy batch: {str(e)}")
-            return locations
+                else:
+                    self._log(f"Warning: Request timeout after {max_retries} attempts. Skipping hierarchy for this batch.")
+                    return locations
+            except requests.exceptions.RequestException as e:
+                wait_time = (2 ** attempt) * 2
+                if attempt < max_retries - 1:
+                    self._log(f"Request error. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    self._log(f"Warning: Failed to fetch hierarchy batch after {max_retries} attempts: {str(e)}")
+                    return locations
+            except Exception as e:
+                wait_time = (2 ** attempt) * 2
+                if attempt < max_retries - 1:
+                    self._log(f"Unexpected error. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    self._log(f"Warning: Unexpected error fetching hierarchy batch after {max_retries} attempts: {str(e)}")
+                    return locations
+        
+        return locations
     
     def _get_osm_population(self, location):
         """Get population from OpenStreetMap tags if available."""
@@ -664,98 +753,74 @@ class LocationAnalyzer:
         return parsed_results_map
     
     def estimate_populations(self, locations: List[Dict]) -> List[Dict]:
-        """Get population estimates from OSM and GPT."""
+        """Get population estimates from GPT only."""
         self._log(f"\n--- Starting Population Estimation Phase for {len(locations)} locations ---")
         
-        self._log("\n>>> Stage: Fetching population data from OpenStreetMap...")
-        updated_locations_osm = []
-        for i, location in enumerate(locations):
-            result = location.copy()  
-            result["osm_population"] = None
-            
-            try:
-                pop_str = location.get("osm_population_tag")
-                if pop_str:
-                    result["osm_population"] = int(str(pop_str).replace(',', '').replace(' ', '')) if pop_str else None
-            except Exception as e:
-                pass
-            
-            updated_locations_osm.append(result)
-        
-        self._log("<<< Stage: Finished fetching OSM data.")
+        # Initialize GPT population fields
+        for loc in locations:
+            loc["gpt_population"] = None
+            loc["gpt_confidence"] = None
+            loc["final_population"] = 0
+            loc["population_source"] = "None"
 
-        final_locations = updated_locations_osm
         if self.use_gpt and self.gpt_client:
-            self._log(f"\n>>> Stage: Fetching population data from GPT ({self.gpt_model}) in batches of {self.chunk_size}...")
+            self._log(f"\n>>> Stage: Calculating population estimates with GPT ({self.gpt_model}) in batches of {self.chunk_size}...")
             
-            locations_for_gpt = updated_locations_osm 
-            
-            for loc in locations_for_gpt:
-                loc["gpt_population"] = None
-                loc["gpt_confidence"] = None
-
-            num_batches = ceil(len(locations_for_gpt) / self.chunk_size)
+            num_batches = ceil(len(locations) / self.chunk_size)
             
             for i in range(num_batches):
                 start_index = i * self.chunk_size
                 end_index = start_index + self.chunk_size
-                batch_locations = locations_for_gpt[start_index:end_index]
+                batch_locations = locations[start_index:end_index]
                 
-                self._log(f"  Processing GPT batch {i+1}/{num_batches} (Indices {start_index}-{min(end_index, len(locations_for_gpt))-1})...")
+                self._log(f"  Calculating population for batch {i+1}/{num_batches} ({len(batch_locations)} locations, {start_index}-{min(end_index, len(locations))-1})...")
 
                 try:
                     gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
                     
+                    success_count = 0
                     for original_idx, result_data in gpt_results_map.items():
-                        if 0 <= original_idx < len(locations_for_gpt): 
-                            locations_for_gpt[original_idx]["gpt_population"] = result_data.get("population")
-                            locations_for_gpt[original_idx]["gpt_confidence"] = result_data.get("confidence")
+                        if 0 <= original_idx < len(locations): 
+                            locations[original_idx]["gpt_population"] = result_data.get("population")
+                            locations[original_idx]["gpt_confidence"] = result_data.get("confidence")
+                            if result_data.get("population") is not None:
+                                success_count += 1
+                    
+                    self._log(f"  Batch {i+1}/{num_batches} complete: {success_count}/{len(batch_locations)} locations got population data")
                 except Exception as e:
-                    self._log(f"Error processing GPT batch {i+1}: {str(e)}")
-                    for idx in range(start_index, min(end_index, len(locations_for_gpt))):
-                         if 0 <= idx < len(locations_for_gpt):
-                            locations_for_gpt[idx]["gpt_confidence"] = "Error"
+                    self._log(f"  Error processing GPT batch {i+1}: {str(e)}")
+                    for idx in range(start_index, min(end_index, len(locations))):
+                         if 0 <= idx < len(locations):
+                            locations[idx]["gpt_confidence"] = "Error"
 
-                self._log(f"  Finished GPT batch {i+1}/{num_batches}.")
-                time.sleep(1)
+                # Small delay between batches to avoid rate limiting
+                if i < num_batches - 1:  # Don't sleep after last batch
+                    time.sleep(1)
 
             self._log("<<< Stage: Finished fetching GPT data.")
-            final_locations = locations_for_gpt
-
         else:
              self._log("\n>>> Stage: Skipping GPT population fetch (use_gpt is False or client not initialized).")
-             for loc in updated_locations_osm:
-                loc["gpt_population"] = None
-                loc["gpt_confidence"] = None
-             final_locations = updated_locations_osm
 
-        self._log("\n>>> Stage: Assigning Final Population (OSM vs GPT)...")
+        self._log("\n>>> Stage: Assigning Final Population (GPT only)...")
         assigned_count = 0
-        for i, loc in enumerate(final_locations):
-            osm_pop = loc.get("osm_population")
+        for i, loc in enumerate(locations):
             gpt_pop = loc.get("gpt_population")
             gpt_conf = loc.get("gpt_confidence")
             
-            loc["final_population"] = 0
-            loc["population_source"] = "None"
-            
-            if osm_pop is not None and osm_pop > 0:
-                loc["final_population"] = osm_pop
-                loc["population_source"] = "OSM"
-                assigned_count += 1
-            elif gpt_pop is not None and gpt_pop > 0 and gpt_conf in ["High", "Medium"]:
+            # Use GPT population if available and confidence is High or Medium
+            if gpt_pop is not None and gpt_pop > 0 and gpt_conf in ["High", "Medium"]:
                 loc["final_population"] = gpt_pop
                 loc["population_source"] = "GPT"
                 assigned_count += 1
         
-        self._log(f"<<< Stage: Finished assigning final population values. Assigned population for {assigned_count}/{len(final_locations)} locations.")
+        self._log(f"<<< Stage: Finished assigning final population values. Assigned population for {assigned_count}/{len(locations)} locations.")
         
         self._log("--- Population Estimation Phase Complete ---")
 
-        return final_locations
+        return locations
     
     def save_to_excel(self, all_locations=None, filename=None) -> BytesIO:
-        """Save final analysis results to Excel and return as BytesIO."""
+        """Save final analysis results to Excel with 2 sheets: Full Data and Clean Data."""
         if all_locations is None or not all_locations:
             self._log("No locations to save.")
             return None
@@ -769,16 +834,12 @@ class LocationAnalyzer:
                  
             df = pd.json_normalize(all_locations, sep='_')
             
+            # Full Data Sheet - All columns
             final_columns = [
                 'name',
                 'type',
                 'latitude',
                 'longitude',
-                'admin_hierarchy_containing_level',
-                'admin_hierarchy_parent_name',
-                'admin_hierarchy_level_4_name',
-                'osm_population_tag',
-                'osm_population_date',
                 'gpt_population',
                 'gpt_confidence',
                 'final_population',
@@ -789,19 +850,38 @@ class LocationAnalyzer:
                 if col not in df.columns:
                     df[col] = None
             
-            df = df[final_columns]
-            df.columns = [col.replace('admin_hierarchy_', '') for col in df.columns]
+            df_full = df[final_columns].copy()
+            df_full.columns = [col.replace('admin_hierarchy_', '') for col in df_full.columns]
             
-            numeric_cols = ['osm_population_tag', 'gpt_population', 'containing_level', 'final_population']
+            numeric_cols = ['gpt_population', 'containing_level', 'final_population']
             for col in numeric_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').astype('Float64')
+                if col in df_full.columns:
+                    df_full[col] = pd.to_numeric(df_full[col], errors='coerce').astype('Float64')
             
+            # Clean Data Sheet - Filtered to >10,000 population
+            # Only Location Name and Population columns
+            df_clean = df_full[['name', 'final_population']].copy()
+            df_clean.columns = ['Location Name', 'Population']
+            
+            # Filter to only locations with population > 10,000
+            df_clean = df_clean[df_clean['Population'] > 10000].copy()
+            
+            # Sort by population descending
+            df_clean = df_clean.sort_values('Population', ascending=False)
+            
+            # Reset index
+            df_clean = df_clean.reset_index(drop=True)
+            
+            # Create Excel with 2 sheets
             output = BytesIO()
-            df.to_excel(output, index=False, engine='openpyxl')
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_full.to_excel(writer, sheet_name='Full Data', index=False)
+                df_clean.to_excel(writer, sheet_name='Clean Data', index=False)
+            
             output.seek(0)
             
             self._log(f"\nSaved {len(all_locations)} locations to Excel file.")
+            self._log(f"Clean Data sheet contains {len(df_clean)} locations with population > 10,000.")
             return output
             
         except Exception as e:
@@ -816,10 +896,12 @@ class LocationAnalyzer:
             
             self._log("\n--- Finding OSM Locations ---")
             primary_locations = self._find_osm_locations(self.polygon_points, "primary", self.primary_place_types)
+            time.sleep(1)  # Delay between query types to avoid rate limiting
             
             additional_places = []
             if self.additional_place_types:
                 additional_places = self._find_osm_locations(self.polygon_points, "additional", self.additional_place_types)
+                time.sleep(1)  # Delay between query types
             
             special_locations = []
             if self.special_place_types: 
@@ -830,13 +912,20 @@ class LocationAnalyzer:
             all_locations = primary_locations + additional_places + special_locations + administrative_areas
             all_locations = self.clean_and_deduplicate_locations(all_locations)
             
-            self._log("\n--- Fetching Administrative Hierarchy ---")
-            batch_size = 10
+            self._log("\n--- Retrieving Administrative Boundaries ---")
+            # Reduce batch size to avoid rate limiting
+            batch_size = 5  # Smaller batches to reduce API load
+            total_batches = (len(all_locations) + batch_size - 1) // batch_size
             for i in range(0, len(all_locations), batch_size):
                 batch = all_locations[i:i + batch_size]
+                batch_num = (i // batch_size) + 1
+                self._log(f"  Retrieving hierarchy batch {batch_num}/{total_batches} ({len(batch)} locations)...")
                 self._fetch_admin_hierarchy_batch(batch)
+                # Add delay between batches to avoid rate limiting
+                if i + batch_size < len(all_locations):  # Don't delay after last batch
+                    time.sleep(2)  # 2 second delay between batches
             
-            self._log("Finished fetching hierarchy.")
+            self._log("Finished retrieving administrative boundaries.")
 
             self._log(f"\n--- OSM Location Summary (Post-Hierarchy) ---")
             self._log(f"Total unique OSM locations found: {len(all_locations)}")
@@ -854,7 +943,7 @@ class LocationAnalyzer:
                 all_locations = prioritized[:self.max_locations]
                 self._log(f"Processing {len(all_locations)} locations after limiting.")
 
-            self._log("\n--- Starting Population Estimation (OSM/GPT) ---")
+            self._log("\n--- Starting Population Estimation (GPT) ---")
             all_locations = self.estimate_populations(all_locations)
             
             return all_locations
