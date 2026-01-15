@@ -140,18 +140,24 @@ if uploaded_file is not None:
                         if "locations found" in msg.lower() or "Added" in msg and "locations" in msg or "Total unique OSM locations found" in msg:
                             import re
                             # Match patterns like "Total unique OSM locations found: 500" or "Added 5 locations"
-                            match = re.search(r'(\d+)\s+locations', msg, re.IGNORECASE)
+                            # First try to match "found: X" pattern
+                            match = re.search(r'found:\s*(\d+)', msg)
                             if match:
                                 progress_state["locations_found"] = int(match.group(1))
+                            else:
+                                # Fall back to "X locations" pattern
+                                match = re.search(r'(\d+)\s+locations', msg, re.IGNORECASE)
+                                if match:
+                                    progress_state["locations_found"] = int(match.group(1))
                         
-                        if "Processing hierarchy batch" in msg:
+                        if "Retrieving hierarchy batch" in msg or "Processing hierarchy batch" in msg:
                             import re
                             match = re.search(r'batch (\d+)/(\d+)', msg)
                             if match:
                                 progress_state["hierarchy_batches_completed"] = int(match.group(1))
                                 progress_state["hierarchy_batches_total"] = int(match.group(2))
                         
-                        if "Processing GPT batch" in msg:
+                        if "Processing GPT batch" in msg or "Calculating population for batch" in msg:
                             import re
                             match = re.search(r'batch (\d+)/(\d+)', msg)
                             if match:
