@@ -13,25 +13,67 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for better styling
+# Force dark mode with CSS
 st.markdown("""
     <style>
+    /* Force dark mode */
+    .stApp {
+        background-color: #0e1117 !important;
+    }
+    
+    /* Dark mode for all elements */
+    .stApp, .stApp * {
+        color: #fafafa !important;
+    }
+    
+    /* File uploader styling */
+    .stFileUploader {
+        background-color: #262730 !important;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background-color: #1f77b4 !important;
+        color: white !important;
+    }
+    
+    /* Info boxes */
+    .stAlert {
+        background-color: #262730 !important;
+    }
+    
+    /* Headers */
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
-        color: #1f77b4;
+        color: #1f77b4 !important;
         margin-bottom: 1rem;
     }
     .sub-header {
         font-size: 1.2rem;
-        color: #888;
+        color: #888 !important;
         margin-bottom: 2rem;
     }
     .status-box {
         padding: 1rem;
         border-radius: 0.5rem;
-        background-color: #262730;
+        background-color: #262730 !important;
         margin: 1rem 0;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #262730 !important;
+    }
+    
+    /* Metrics */
+    [data-testid="stMetricValue"] {
+        color: #fafafa !important;
+    }
+    
+    /* Dataframe */
+    .stDataFrame {
+        background-color: #262730 !important;
     }
     </style>
 """, unsafe_allow_html=True)
