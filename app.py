@@ -122,7 +122,9 @@ if uploaded_file is not None:
                         "gpt_batches_completed": 0,
                         "gpt_batches_total": 0,
                         "hierarchy_batches_completed": 0,
-                        "hierarchy_batches_total": 0
+                        "hierarchy_batches_total": 0,
+                        "estimated_time": "",
+                        "percent_complete": 0
                     }
                     total_stages = 5  # KMZ, OSM, Hierarchy, GPT, Excel
                     
@@ -137,18 +139,18 @@ if uploaded_file is not None:
                             if match:
                                 progress_state["boundary_points"] = int(match.group(1))
                         
-                        if "locations found" in msg.lower() or "Added" in msg and "locations" in msg or "Total unique OSM locations found" in msg:
+                        # Only update location count from the final summary message (not intermediate "Added X locations" messages)
+                        if "Total unique OSM locations found" in msg:
                             import re
-                            # Match patterns like "Total unique OSM locations found: 500" or "Added 5 locations"
-                            # First try to match "found: X" pattern
                             match = re.search(r'found:\s*(\d+)', msg)
                             if match:
                                 progress_state["locations_found"] = int(match.group(1))
-                            else:
-                                # Fall back to "X locations" pattern
-                                match = re.search(r'(\d+)\s+locations', msg, re.IGNORECASE)
-                                if match:
-                                    progress_state["locations_found"] = int(match.group(1))
+                        elif "Added" in msg and "locations" in msg:
+                            # For intermediate messages, accumulate the count
+                            import re
+                            match = re.search(r'Added\s+(\d+)\s+locations', msg)
+                            if match:
+                                progress_state["locations_found"] = progress_state.get("locations_found", 0) + int(match.group(1))
                         
                         if "Retrieving hierarchy batch" in msg or "Processing hierarchy batch" in msg:
                             import re
@@ -163,6 +165,29 @@ if uploaded_file is not None:
                             if match:
                                 progress_state["gpt_batches_completed"] = int(match.group(1))
                                 progress_state["gpt_batches_total"] = int(match.group(2))
+                        
+                        # Extract estimated time from log
+                        if "Estimated remaining time" in msg:
+                            import re
+                            match = re.search(r'time:\s*(.+)$', msg)
+                            if match:
+                                progress_state["estimated_time"] = match.group(1).strip()
+                        
+                        # Calculate percentage complete based on batch progress
+                        hierarchy_total = progress_state.get("hierarchy_batches_total", 0)
+                        hierarchy_done = progress_state.get("hierarchy_batches_completed", 0)
+                        gpt_total = progress_state.get("gpt_batches_total", 0)
+                        gpt_done = progress_state.get("gpt_batches_completed", 0)
+                        
+                        if hierarchy_total > 0 or gpt_total > 0:
+                            total_batches = hierarchy_total + gpt_total
+                            done_batches = hierarchy_done + gpt_done
+                            if total_batches > 0:
+                                # Leave 10% for KMZ parsing and 10% for Excel export
+                                batch_percent = (done_batches / total_batches) * 80
+                                progress_state["percent_complete"] = 10 + batch_percent
+                            else:
+                                progress_state["percent_complete"] = 10
                         
                         # Update stage based on message content
                         if "Extracting boundary" in msg or "KMZ" in msg or "boundary points" in msg or "Parsing KMZ" in msg:
@@ -181,23 +206,33 @@ if uploaded_file is not None:
                             progress_state["current_stage"] = "Compiling results into Excel export"
                             progress_state["stage_progress"] = 5
                         
-                        # Update progress bar (0-100%)
-                        progress_value = (progress_state["stage_progress"] / total_stages)
+                        # Update progress bar using percentage
+                        percent = progress_state.get("percent_complete", 0)
+                        if percent == 0:
+                            # Use stage-based progress if no batch progress yet
+                            percent = (progress_state["stage_progress"] / total_stages) * 100
+                        progress_value = min(percent / 100, 0.99)  # Cap at 99% until complete
                         main_progress.progress(progress_value)
                         
                         # Enhanced progress display with metrics
                         with stage_text:
-                            st.markdown(f"### {progress_state['current_stage']}")
+                            percent_display = int(progress_state.get("percent_complete", 0))
+                            if percent_display > 0:
+                                st.markdown(f"### {progress_state['current_stage']} ({percent_display}%)")
+                            else:
+                                st.markdown(f"### {progress_state['current_stage']}")
                         
                         # Show detailed metrics
                         with progress_metrics:
                             metrics_parts = []
                             if progress_state.get("locations_found", 0) > 0:
-                                metrics_parts.append(f"{progress_state['locations_found']} locations found")
+                                metrics_parts.append(f"{progress_state['locations_found']} locations")
                             if progress_state.get("hierarchy_batches_total", 0) > 0:
-                                metrics_parts.append(f"Hierarchy: {progress_state['hierarchy_batches_completed']}/{progress_state['hierarchy_batches_total']} batches")
+                                metrics_parts.append(f"Hierarchy: {progress_state['hierarchy_batches_completed']}/{progress_state['hierarchy_batches_total']}")
                             if progress_state.get("gpt_batches_total", 0) > 0:
-                                metrics_parts.append(f"GPT: {progress_state['gpt_batches_completed']}/{progress_state['gpt_batches_total']} batches")
+                                metrics_parts.append(f"GPT: {progress_state['gpt_batches_completed']}/{progress_state['gpt_batches_total']}")
+                            if progress_state.get("estimated_time"):
+                                metrics_parts.append(f"Est: {progress_state['estimated_time']}")
                             
                             if metrics_parts:
                                 st.caption(" | ".join(metrics_parts))
