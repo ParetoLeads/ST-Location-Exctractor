@@ -217,10 +217,17 @@ if uploaded_file is not None:
                         # Enhanced progress display with metrics
                         with stage_text:
                             percent_display = int(progress_state.get("percent_complete", 0))
-                            if percent_display > 0:
-                                st.markdown(f"### {progress_state['current_stage']} ({percent_display}%)")
+                            est_time = progress_state.get("estimated_time", "")
+                            
+                            stage_info = progress_state['current_stage']
+                            if percent_display > 0 and est_time:
+                                st.markdown(f"### {stage_info} — {percent_display}% complete (Est: {est_time})")
+                            elif percent_display > 0:
+                                st.markdown(f"### {stage_info} — {percent_display}% complete")
+                            elif est_time:
+                                st.markdown(f"### {stage_info} (Est: {est_time})")
                             else:
-                                st.markdown(f"### {progress_state['current_stage']}")
+                                st.markdown(f"### {stage_info}")
                         
                         # Show detailed metrics
                         with progress_metrics:
