@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import tempfile
 import os
+import pydeck as pdk
 from location_analyzer import LocationAnalyzer
 from io import BytesIO
 
@@ -80,8 +81,8 @@ st.markdown("""
 
 # Title
 st.markdown('<h1 class="main-header">🗺️ KMZ Location Scraper</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; color: #888; margin-top: -1rem; margin-bottom: 0.5rem;">Developed with 💡 by Paretoleads.com</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header" style="color: #ffffff;">Extract locations from KMZ files and estimate populations using OpenStreetMap and GPT</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header" style="color: #ffffff; text-align: center;">Extract locations from KMZ files and estimate populations using OpenStreetMap and GPT</p>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #666; font-size: 0.85rem; margin-top: -0.5rem;">Developed with 💡 by Paretoleads.com</p>', unsafe_allow_html=True)
 
 # Hardcoded configuration
 PRIMARY_TYPES = ['city', 'town', 'district', 'county', 'municipality', 'borough', 'suburb']
@@ -115,6 +116,8 @@ if 'progress_messages' not in st.session_state:
     st.session_state.progress_messages = []
 if 'status_messages' not in st.session_state:
     st.session_state.status_messages = []
+if 'polygon_points' not in st.session_state:
+    st.session_state.polygon_points = None
 
 # Process button
 if uploaded_file is not None:
@@ -329,6 +332,7 @@ if uploaded_file is not None:
                                 st.session_state.excel_data = excel_data
                                 st.session_state.progress_messages = progress_messages
                                 st.session_state.status_messages = status_messages
+                                st.session_state.polygon_points = analyzer.polygon_points
                                 st.success(f"✅ Successfully processed {len(results)} locations!")
                             else:
                                 st.warning("⚠️ Analysis completed but Excel export failed. Results are still available below.")
@@ -383,9 +387,7 @@ if st.session_state.results is not None:
         'latitude',
         'longitude',
         'gpt_population',
-        'gpt_confidence',
-        'final_population',
-        'population_source'
+        'gpt_confidence'
     ]
     
     # Ensure all columns exist
@@ -403,8 +405,6 @@ if st.session_state.results is not None:
     # Format numeric columns
     if 'Gpt Population' in df_display.columns:
         df_display['Gpt Population'] = df_display['Gpt Population'].apply(lambda x: f"{int(x):,}" if pd.notna(x) and x > 0 else "-")
-    if 'Final Population' in df_display.columns:
-        df_display['Final Population'] = df_display['Final Population'].apply(lambda x: f"{int(x):,}" if pd.notna(x) and x > 0 else "-")
     if 'Latitude' in df_display.columns:
         df_display['Latitude'] = df_display['Latitude'].apply(lambda x: f"{x:.6f}" if pd.notna(x) else "-")
     if 'Longitude' in df_display.columns:
@@ -421,12 +421,73 @@ if st.session_state.results is not None:
         st.metric("GPT Population Data", gpt_count)
     
     with col3:
-        final_count = (df['final_population'] > 0).sum() if 'final_population' in df.columns else 0
-        st.metric("Population Assigned", final_count)
+        pop_count = ((df['gpt_population'].notna()) & (df['gpt_population'] > 0)).sum() if 'gpt_population' in df.columns else 0
+        st.metric("Population Assigned", pop_count)
     
     with col4:
-        clean_count = ((df['final_population'] > 10000).sum() if 'final_population' in df.columns else 0)
+        clean_count = ((df['gpt_population'].notna()) & (df['gpt_population'] > 10000)).sum() if 'gpt_population' in df.columns else 0
         st.metric("Locations > 10K", clean_count)
+    
+    # Display map with locations and polygon boundary
+    st.subheader("🗺️ Location Map")
+    
+    # Prepare location data for map
+    map_df = df[['latitude', 'longitude', 'name']].dropna()
+    
+    if len(map_df) > 0:
+        # Calculate center of locations
+        center_lat = map_df['latitude'].mean()
+        center_lon = map_df['longitude'].mean()
+        
+        # Create layers
+        layers = []
+        
+        # Add polygon layer if we have polygon points
+        if st.session_state.polygon_points:
+            # Convert polygon points to the format pydeck expects (list of [lon, lat])
+            polygon_coords = [[pt[0], pt[1]] for pt in st.session_state.polygon_points]
+            # Close the polygon
+            if polygon_coords[0] != polygon_coords[-1]:
+                polygon_coords.append(polygon_coords[0])
+            
+            polygon_layer = pdk.Layer(
+                "PolygonLayer",
+                data=[{"polygon": polygon_coords}],
+                get_polygon="polygon",
+                get_fill_color=[31, 119, 180, 50],  # Blue with transparency
+                get_line_color=[31, 119, 180, 255],  # Solid blue outline
+                line_width_min_pixels=2,
+                pickable=False,
+            )
+            layers.append(polygon_layer)
+        
+        # Add scatter plot layer for locations
+        scatter_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position=["longitude", "latitude"],
+            get_color=[255, 87, 51, 200],  # Orange-red
+            get_radius=300,
+            radius_min_pixels=3,
+            radius_max_pixels=10,
+            pickable=True,
+        )
+        layers.append(scatter_layer)
+        
+        # Create the deck
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=pdk.ViewState(
+                latitude=center_lat,
+                longitude=center_lon,
+                zoom=9,
+                pitch=0,
+            ),
+            map_style="mapbox://styles/mapbox/dark-v10",
+            tooltip={"text": "{name}"}
+        )
+        
+        st.pydeck_chart(deck)
     
     # Add search/filter
     st.subheader("Location Data")
@@ -453,16 +514,16 @@ if st.session_state.results is not None:
             width='stretch'
         )
 
-# Always visible log section at bottom
+# Collapsible log section at bottom (closed by default)
 st.divider()
-st.subheader("Processing Log")
-all_messages = st.session_state.progress_messages + st.session_state.status_messages
-if all_messages:
-    log_text = "\n".join(all_messages)
-    st.code(log_text, language=None)
-    st.caption("Copy this log if you need to report any issues")
-else:
-    st.info("Log will appear here once processing starts.")
+with st.expander("📋 Processing Log (click to expand)", expanded=False):
+    all_messages = st.session_state.progress_messages + st.session_state.status_messages
+    if all_messages:
+        log_text = "\n".join(all_messages)
+        st.code(log_text, language=None)
+        st.caption("Copy this log if you need to report any issues")
+    else:
+        st.info("Log will appear here once processing starts.")
 
 # Footer
 st.divider()
