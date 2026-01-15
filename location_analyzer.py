@@ -77,6 +77,9 @@ class LocationAnalyzer:
         self.additional_types_pattern = "|".join(self.additional_place_types)
         self.special_types_pattern = "|".join(self.special_place_types) if self.special_place_types else "^$"
         
+        # Store polygon points for map visualization
+        self.polygon_points = None
+        
         # Initialize OpenAI client if using GPT
         self.gpt_client = None
         if self.use_gpt and self.openai_api_key:
@@ -96,6 +99,38 @@ class LocationAnalyzer:
         self.progress_callback(message)
         if self.verbose:
             self.status_callback(message)
+    
+    def _estimate_processing_time(self, num_locations: int) -> str:
+        """Estimate the total processing time based on number of locations.
+        
+        Timing assumptions (conservative):
+        - Hierarchy batches: 10 locations per batch, 4s delay between batches, ~3s processing
+        - GPT batches: 10 locations per batch, 2s delay between batches, ~6s API response
+        - Add 20% buffer for retries
+        """
+        batch_size = 10
+        num_batches = ceil(num_locations / batch_size)
+        
+        # Hierarchy phase: ~7 seconds per batch (4s delay + 3s processing)
+        hierarchy_time = num_batches * 7
+        
+        # GPT phase: ~8 seconds per batch (2s delay + 6s API response)
+        gpt_time = num_batches * 8
+        
+        # Total estimated time in seconds with 20% buffer
+        total_seconds = int((hierarchy_time + gpt_time) * 1.2)
+        
+        # Convert to minutes and seconds
+        if total_seconds >= 60:
+            minutes = total_seconds // 60
+            seconds = total_seconds % 60
+            if minutes >= 60:
+                hours = minutes // 60
+                minutes = minutes % 60
+                return f"{int(hours)}h {int(minutes)}m"
+            return f"{int(minutes)}m {int(seconds)}s"
+        else:
+            return f"{int(total_seconds)}s"
     
     def _generate_output_filename(self, kmz_file: str) -> str:
         """Generate output Excel filename based on KMZ filename."""
@@ -466,8 +501,8 @@ class LocationAnalyzer:
                 
         return unique_locations
     
-    def _fetch_admin_hierarchy_batch(self, locations: List[Dict], max_retries: int = 3) -> List[Dict]:
-        """Get administrative hierarchy for multiple locations in a single batch request with retry logic."""
+    def _fetch_admin_hierarchy_batch(self, locations: List[Dict]) -> List[Dict]:
+        """Get administrative hierarchy for multiple locations in a single batch request with unlimited retry."""
         if not locations:
             return locations
 
@@ -488,8 +523,9 @@ class LocationAnalyzer:
         out tags;
         """
         
-        # Retry logic with exponential backoff
-        for attempt in range(max_retries):
+        # Retry indefinitely until success - never skip hierarchy
+        attempt = 0
+        while True:
             try:
                 response = requests.post(self.overpass_url, data=query, timeout=DEFAULT_API_TIMEOUT + 10)
                 response.raise_for_status()
@@ -530,62 +566,39 @@ class LocationAnalyzer:
                 return locations
                 
             except requests.exceptions.HTTPError as e:
+                attempt += 1
+                # Cap wait time at 60 seconds max
+                wait_time = min((2 ** attempt) * 2, 60)
                 if e.response.status_code == 429:  # Too Many Requests
-                    wait_time = (2 ** attempt) * 2  # Exponential backoff: 2s, 4s, 8s
-                    if attempt < max_retries - 1:
-                        self._log(f"Rate limited (429). Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        self._log(f"Warning: Rate limited after {max_retries} attempts. Skipping hierarchy for this batch.")
-                        return locations
+                    self._log(f"Rate limited (429). Waiting {wait_time}s before retry (attempt {attempt})...")
+                    time.sleep(wait_time)
+                    continue
                 elif e.response.status_code == 504:  # Gateway Timeout
-                    wait_time = (2 ** attempt) * 3  # Longer wait for timeouts: 3s, 6s, 12s
-                    if attempt < max_retries - 1:
-                        self._log(f"Gateway timeout (504). Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        self._log(f"Warning: Gateway timeout after {max_retries} attempts. Skipping hierarchy for this batch.")
-                        return locations
+                    self._log(f"Gateway timeout (504). Waiting {wait_time}s before retry (attempt {attempt})...")
+                    time.sleep(wait_time)
+                    continue
                 else:
-                    wait_time = (2 ** attempt) * 2
-                    if attempt < max_retries - 1:
-                        self._log(f"HTTP error {e.response.status_code}. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        self._log(f"Warning: HTTP error {e.response.status_code} after {max_retries} attempts. Skipping hierarchy for this batch: {str(e)}")
-                        return locations
+                    self._log(f"HTTP error {e.response.status_code}. Waiting {wait_time}s before retry (attempt {attempt})...")
+                    time.sleep(wait_time)
+                    continue
             except requests.exceptions.Timeout:
-                wait_time = (2 ** attempt) * 3
-                if attempt < max_retries - 1:
-                    self._log(f"Request timeout. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    self._log(f"Warning: Request timeout after {max_retries} attempts. Skipping hierarchy for this batch.")
-                    return locations
+                attempt += 1
+                wait_time = min((2 ** attempt) * 3, 60)
+                self._log(f"Request timeout. Waiting {wait_time}s before retry (attempt {attempt})...")
+                time.sleep(wait_time)
+                continue
             except requests.exceptions.RequestException as e:
-                wait_time = (2 ** attempt) * 2
-                if attempt < max_retries - 1:
-                    self._log(f"Request error. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    self._log(f"Warning: Failed to fetch hierarchy batch after {max_retries} attempts: {str(e)}")
-                    return locations
+                attempt += 1
+                wait_time = min((2 ** attempt) * 2, 60)
+                self._log(f"Request error: {str(e)}. Waiting {wait_time}s before retry (attempt {attempt})...")
+                time.sleep(wait_time)
+                continue
             except Exception as e:
-                wait_time = (2 ** attempt) * 2
-                if attempt < max_retries - 1:
-                    self._log(f"Unexpected error. Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    self._log(f"Warning: Unexpected error fetching hierarchy batch after {max_retries} attempts: {str(e)}")
-                    return locations
-        
-        return locations
+                attempt += 1
+                wait_time = min((2 ** attempt) * 2, 60)
+                self._log(f"Unexpected error: {str(e)}. Waiting {wait_time}s before retry (attempt {attempt})...")
+                time.sleep(wait_time)
+                continue
     
     def _get_osm_population(self, location):
         """Get population from OpenStreetMap tags if available."""
@@ -793,9 +806,9 @@ class LocationAnalyzer:
                          if 0 <= idx < len(locations):
                             locations[idx]["gpt_confidence"] = "Error"
 
-                # Small delay between batches to avoid rate limiting
+                # Delay between batches to avoid rate limiting
                 if i < num_batches - 1:  # Don't sleep after last batch
-                    time.sleep(1)
+                    time.sleep(2)
 
             self._log("<<< Stage: Finished fetching GPT data.")
         else:
@@ -834,16 +847,14 @@ class LocationAnalyzer:
                  
             df = pd.json_normalize(all_locations, sep='_')
             
-            # Full Data Sheet - All columns
+            # Full Data Sheet - Core columns only (no final_population/population_source)
             final_columns = [
                 'name',
                 'type',
                 'latitude',
                 'longitude',
                 'gpt_population',
-                'gpt_confidence',
-                'final_population',
-                'population_source'
+                'gpt_confidence'
             ]
             
             for col in final_columns:
@@ -853,18 +864,18 @@ class LocationAnalyzer:
             df_full = df[final_columns].copy()
             df_full.columns = [col.replace('admin_hierarchy_', '') for col in df_full.columns]
             
-            numeric_cols = ['gpt_population', 'containing_level', 'final_population']
+            numeric_cols = ['gpt_population', 'containing_level']
             for col in numeric_cols:
                 if col in df_full.columns:
                     df_full[col] = pd.to_numeric(df_full[col], errors='coerce').astype('Float64')
             
             # Clean Data Sheet - Filtered to >10,000 population
-            # Only Location Name and Population columns
-            df_clean = df_full[['name', 'final_population']].copy()
+            # Only Location Name and Population columns (using gpt_population)
+            df_clean = df_full[['name', 'gpt_population']].copy()
             df_clean.columns = ['Location Name', 'Population']
             
             # Filter to only locations with population > 10,000
-            df_clean = df_clean[df_clean['Population'] > 10000].copy()
+            df_clean = df_clean[df_clean['Population'].notna() & (df_clean['Population'] > 10000)].copy()
             
             # Sort by population descending
             df_clean = df_clean.sort_values('Population', ascending=False)
@@ -896,12 +907,12 @@ class LocationAnalyzer:
             
             self._log("\n--- Finding OSM Locations ---")
             primary_locations = self._find_osm_locations(self.polygon_points, "primary", self.primary_place_types)
-            time.sleep(1)  # Delay between query types to avoid rate limiting
+            time.sleep(3)  # Delay between query types to avoid rate limiting
             
             additional_places = []
             if self.additional_place_types:
                 additional_places = self._find_osm_locations(self.polygon_points, "additional", self.additional_place_types)
-                time.sleep(1)  # Delay between query types
+                time.sleep(3)  # Delay between query types
             
             special_locations = []
             if self.special_place_types: 
@@ -912,9 +923,16 @@ class LocationAnalyzer:
             all_locations = primary_locations + additional_places + special_locations + administrative_areas
             all_locations = self.clean_and_deduplicate_locations(all_locations)
             
+            self._log(f"\n--- OSM Location Summary ---")
+            self._log(f"Total unique OSM locations found: {len(all_locations)}")
+            
+            # Calculate and display time estimate
+            estimated_time = self._estimate_processing_time(len(all_locations))
+            self._log(f"Estimated remaining time: {estimated_time}")
+            
             self._log("\n--- Retrieving Administrative Boundaries ---")
-            # Batch size matches GPT chunk size to reduce number of API calls
-            batch_size = 10  # Match GPT chunk size to reduce number of batches
+            # Batch size for hierarchy queries
+            batch_size = 10
             total_batches = (len(all_locations) + batch_size - 1) // batch_size
             for i in range(0, len(all_locations), batch_size):
                 batch = all_locations[i:i + batch_size]
@@ -923,12 +941,9 @@ class LocationAnalyzer:
                 self._fetch_admin_hierarchy_batch(batch)
                 # Add delay between batches to avoid rate limiting
                 if i + batch_size < len(all_locations):  # Don't delay after last batch
-                    time.sleep(2)  # 2 second delay between batches
+                    time.sleep(4)  # 4 second delay between batches for rate limit safety
             
             self._log("Finished retrieving administrative boundaries.")
-
-            self._log(f"\n--- OSM Location Summary (Post-Hierarchy) ---")
-            self._log(f"Total unique OSM locations found: {len(all_locations)}")
 
             if self.max_locations > 0 and len(all_locations) > self.max_locations:
                 self._log(f"\nLimiting results to {self.max_locations} locations (out of {len(all_locations)} found)")
