@@ -23,10 +23,10 @@ class LocationAnalyzer:
     def __init__(self, kmz_file: str, output_excel: str = None, 
                  verbose: bool = False,
                  openai_api_key: str = "", use_gpt: bool = True, 
-                 chunk_size: int = DEFAULT_CHUNK_SIZE,
-                 max_locations: int = DEFAULT_MAX_LOCATIONS,
-                 pause_before_gpt: bool = DEFAULT_PAUSE_BEFORE_GPT,
-                 enable_web_browsing: bool = DEFAULT_ENABLE_WEB_BROWSING,
+                 chunk_size: int = None,
+                 max_locations: int = None,
+                 pause_before_gpt: bool = None,
+                 enable_web_browsing: bool = None,
                  primary_place_types: List[str] = None,
                  additional_place_types: List[str] = None,
                  special_place_types: List[str] = None,
@@ -55,10 +55,10 @@ class LocationAnalyzer:
         self.verbose = verbose or config.VERBOSE
         self.openai_api_key = openai_api_key
         self.use_gpt = use_gpt and config.USE_GPT
-        self.chunk_size = chunk_size or config.DEFAULT_CHUNK_SIZE
-        self.max_locations = max_locations if max_locations > 0 else config.DEFAULT_MAX_LOCATIONS
-        self.pause_before_gpt = pause_before_gpt or config.DEFAULT_PAUSE_BEFORE_GPT
-        self.enable_web_browsing = enable_web_browsing or config.DEFAULT_ENABLE_WEB_BROWSING
+        self.chunk_size = chunk_size if chunk_size is not None else config.DEFAULT_CHUNK_SIZE
+        self.max_locations = max_locations if max_locations is not None and max_locations > 0 else config.DEFAULT_MAX_LOCATIONS
+        self.pause_before_gpt = pause_before_gpt if pause_before_gpt is not None else config.DEFAULT_PAUSE_BEFORE_GPT
+        self.enable_web_browsing = enable_web_browsing if enable_web_browsing is not None else config.DEFAULT_ENABLE_WEB_BROWSING
         self.overpass_url = config.OSM_OVERPASS_URL
         
         # Progress callbacks
