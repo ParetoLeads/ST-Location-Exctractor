@@ -1,0 +1,505 @@
+import streamlit as st
+import pandas as pd
+import tempfile
+import os
+import pydeck as pdk
+from location_analyzer import LocationAnalyzer
+from io import BytesIO
+from config import config
+from utils.validators import validate_kmz_file, validate_file_size, validate_api_key
+from utils.exceptions import ValidationError, KMZParseError
+from utils.progress_tracker import ProgressTracker, ProgressUI, create_progress_callback
+
+# Page configuration
+st.set_page_config(
+    page_title="KMZ Location Scraper",
+    page_icon="🗺️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Force dark mode with comprehensive CSS
+st.markdown("""
+    <style>
+    /* Force dark mode on root and all containers */
+    html, body, #root, .stApp {
+        background-color: #0e1117 !important;
+        color: #fafafa !important;
+    }
+    
+    /* Main app container */
+    .stApp {
+        background-color: #0e1117 !important;
+    }
+    
+    /* Main content area */
+    .main .block-container {
+        background-color: #0e1117 !important;
+        color: #fafafa !important;
+    }
+    
+    /* All text elements */
+    .stApp, .stApp *, p, h1, h2, h3, h4, h5, h6, span, div, label {
+        color: #fafafa !important;
+    }
+    
+    /* File uploader */
+    .stFileUploader, .stFileUploader > div {
+        background-color: #262730 !important;
+        border-color: #444 !important;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background-color: #1f77b4 !important;
+        color: white !important;
+        border-color: #1f77b4 !important;
+    }
+    .stButton > button:hover {
+        background-color: #1a6ba3 !important;
+        border-color: #1a6ba3 !important;
+    }
+    
+    /* Info boxes and alerts */
+    .stAlert, .stAlert > div {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* Input fields */
+    .stTextInput > div > div > input,
+    .stTextArea > div > div > textarea {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border-color: #444 !important;
+    }
+    
+    /* Select boxes */
+    .stSelectbox > div > div {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* Progress bars */
+    .stProgress > div > div > div {
+        background-color: #262730 !important;
+    }
+    
+    /* Code blocks */
+    .stCodeBlock, code {
+        background-color: #1a1a1a !important;
+        color: #fafafa !important;
+    }
+    
+    /* Headers */
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #1f77b4 !important;
+        margin-bottom: 1rem;
+    }
+    .sub-header {
+        font-size: 1.2rem;
+        color: #fafafa !important;
+        margin-bottom: 2rem;
+    }
+    .status-box {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        background-color: #262730 !important;
+        margin: 1rem 0;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"], [data-testid="stSidebar"] > div {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* Metrics */
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+        color: #fafafa !important;
+    }
+    
+    /* Dataframe */
+    .stDataFrame, .stDataFrame > div {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* Tables */
+    table, thead, tbody, tr, td, th {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border-color: #444 !important;
+    }
+    
+    /* Expanders */
+    .streamlit-expanderHeader {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* Dividers */
+    hr {
+        border-color: #444 !important;
+    }
+    
+    /* Override any light mode classes */
+    [data-baseweb="light"] {
+        background-color: #0e1117 !important;
+    }
+    
+    /* Force dark theme attribute */
+    body {
+        color-scheme: dark !important;
+    }
+    
+    /* Override Streamlit's theme detection */
+    [data-baseweb="light"] {
+        background-color: #0e1117 !important;
+    }
+    
+    /* Ensure all Streamlit widgets are dark */
+    .stApp [data-baseweb] {
+        background-color: #0e1117 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Title
+st.markdown('<h1 class="main-header">🗺️ KMZ Location Scraper</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header" style="color: #ffffff; text-align: center;">Extract locations from KMZ files and estimate populations using OpenStreetMap and GPT</p>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #666; font-size: 0.85rem; margin-top: -0.5rem;">Developed with 💡 by Paretoleads.com</p>', unsafe_allow_html=True)
+
+# Configuration is now managed by config module
+
+# Main content area
+uploaded_file = st.file_uploader(
+    f"Upload KMZ File (Max {config.MAX_FILE_SIZE_MB}MB)",
+    type=['kmz'],
+    help=f"Select a KMZ file containing the boundary polygon. Maximum file size: {config.MAX_FILE_SIZE_MB}MB",
+    accept_multiple_files=False
+)
+
+# Initialize session state
+if 'results' not in st.session_state:
+    st.session_state.results = None
+if 'excel_data' not in st.session_state:
+    st.session_state.excel_data = None
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+if 'progress_messages' not in st.session_state:
+    st.session_state.progress_messages = []
+if 'status_messages' not in st.session_state:
+    st.session_state.status_messages = []
+if 'polygon_points' not in st.session_state:
+    st.session_state.polygon_points = None
+
+# Process button
+if uploaded_file is not None:
+    # Validate file size
+    try:
+        validate_file_size(uploaded_file.size)
+    except ValidationError as e:
+        st.error(f"❌ {str(e)}")
+    else:
+        if st.button("🚀 Start Analysis", type="primary", disabled=st.session_state.processing):
+            st.session_state.processing = True
+            st.session_state.results = None
+            st.session_state.excel_data = None
+            
+            # Create temporary file for KMZ
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
+                tmp_file.write(uploaded_file.read())
+                tmp_kmz_path = tmp_file.name
+            
+            # Validate KMZ file
+            kmz_valid = True
+            try:
+                validate_kmz_file(tmp_kmz_path)
+            except (ValidationError, KMZParseError) as e:
+                st.error(f"❌ Invalid KMZ file: {str(e)}")
+                st.session_state.processing = False
+                if os.path.exists(tmp_kmz_path):
+                    os.unlink(tmp_kmz_path)
+                kmz_valid = False
+            
+            if kmz_valid:
+                try:
+                    # Get and validate API key from secrets
+                    api_key = st.secrets.get("OPENAI_API_KEY", "")
+                    try:
+                        validate_api_key(api_key)
+                    except ValidationError as e:
+                        st.error(f"⚠️ {str(e)}")
+                        st.session_state.processing = False
+                    else:
+                        # Create progress containers
+                        progress_container = st.container()
+                        status_container = st.container()
+                        
+                        with progress_container:
+                            # Enhanced progress display
+                            stage_text = st.empty()
+                            main_progress = st.progress(0)
+                            progress_metrics = st.empty()
+                            status_text = st.empty()
+                        
+                        # Progress tracking using new ProgressTracker
+                        progress_messages = []
+                        status_messages = []
+                        
+                        # Initialize progress tracker and UI
+                        progress_tracker = ProgressTracker()
+                        progress_ui = ProgressUI(
+                            stage_text_container=stage_text,
+                            progress_bar=main_progress,
+                            metrics_container=progress_metrics,
+                            status_text_container=status_text
+                        )
+                        
+                        # Create callbacks
+                        progress_callback = create_progress_callback(
+                            tracker=progress_tracker,
+                            ui=progress_ui,
+                            progress_messages=progress_messages
+                        )
+                        
+                        def status_callback(msg: str) -> None:
+                            status_messages.append(msg)
+                            progress_messages.append(msg)  # Also add to progress messages for log
+                        
+                        # Initialize analyzer
+                        try:
+                            analyzer = LocationAnalyzer(
+                                kmz_file=tmp_kmz_path,
+                                verbose=config.VERBOSE,
+                                openai_api_key=api_key,
+                                use_gpt=config.USE_GPT,
+                                chunk_size=config.DEFAULT_CHUNK_SIZE,
+                                max_locations=config.DEFAULT_MAX_LOCATIONS,
+                                pause_before_gpt=False,  # Not used in Streamlit
+                                enable_web_browsing=config.DEFAULT_ENABLE_WEB_BROWSING,
+                                primary_place_types=config.PRIMARY_PLACE_TYPES,
+                                additional_place_types=config.ADDITIONAL_PLACE_TYPES,
+                                special_place_types=config.SPECIAL_PLACE_TYPES,
+                                progress_callback=progress_callback,
+                                status_callback=status_callback
+                            )
+                            
+                            # Run analysis
+                            results = analyzer.run()
+                            
+                            if results:
+                                # Update progress to 100%
+                                progress_ui.mark_complete()
+                                
+                                # Save to Excel
+                                excel_data = analyzer.save_to_excel(results)
+                                
+                                if excel_data:
+                                    st.session_state.results = results
+                                    st.session_state.excel_data = excel_data
+                                    st.session_state.progress_messages = progress_messages
+                                    st.session_state.status_messages = status_messages
+                                    st.session_state.polygon_points = analyzer.polygon_points
+                                    st.success(f"✅ Successfully processed {len(results)} locations!")
+                                else:
+                                    st.warning("⚠️ Analysis completed but Excel export failed. Results are still available below.")
+                                    st.session_state.results = results
+                                    st.session_state.progress_messages = progress_messages
+                                    st.session_state.status_messages = status_messages
+                            else:
+                                st.error("❌ Analysis failed. Check the status messages above.")
+                                st.session_state.progress_messages = progress_messages
+                                st.session_state.status_messages = status_messages
+                                main_progress.progress(0)
+                        
+                        except Exception as e:
+                            st.error(f"❌ Error during analysis: {str(e)}")
+                            st.session_state.progress_messages = progress_messages
+                            st.session_state.status_messages = status_messages
+                            import traceback
+                            error_traceback = traceback.format_exc()
+                            with st.expander("Error Details"):
+                                st.code(error_traceback)
+                            progress_messages.append(f"ERROR: {str(e)}")
+                            progress_messages.append(error_traceback)
+                            main_progress.progress(0)
+                        
+                        finally:
+                            # Clean up temp file
+                            if 'tmp_kmz_path' in locals() and os.path.exists(tmp_kmz_path):
+                                os.unlink(tmp_kmz_path)
+                            st.session_state.processing = False
+                
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    import traceback
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+                    st.session_state.processing = False
+                    if 'tmp_kmz_path' in locals() and os.path.exists(tmp_kmz_path):
+                        os.unlink(tmp_kmz_path)
+
+# Display results
+if st.session_state.results is not None:
+    st.divider()
+    st.header("📊 Results")
+    
+    # Convert results to DataFrame
+    df = pd.json_normalize(st.session_state.results, sep='_')
+    
+    # Select and reorder columns for display
+    display_columns = [
+        'name',
+        'type',
+        'latitude',
+        'longitude',
+        'gpt_population',
+        'gpt_confidence'
+    ]
+    
+    # Ensure all columns exist
+    for col in display_columns:
+        if col not in df.columns:
+            df[col] = None
+    
+    # Select available columns
+    available_columns = [col for col in display_columns if col in df.columns]
+    df_display = df[available_columns].copy()
+    
+    # Clean column names
+    df_display.columns = [col.replace('admin_hierarchy_', '').replace('_', ' ').title() for col in df_display.columns]
+    
+    # Format numeric columns
+    if 'Gpt Population' in df_display.columns:
+        df_display['Gpt Population'] = df_display['Gpt Population'].apply(lambda x: f"{int(x):,}" if pd.notna(x) and x > 0 else "-")
+    if 'Latitude' in df_display.columns:
+        df_display['Latitude'] = df_display['Latitude'].apply(lambda x: f"{x:.6f}" if pd.notna(x) else "-")
+    if 'Longitude' in df_display.columns:
+        df_display['Longitude'] = df_display['Longitude'].apply(lambda x: f"{x:.6f}" if pd.notna(x) else "-")
+    
+    # Display statistics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Locations", len(df_display))
+    
+    with col2:
+        gpt_count = df['gpt_population'].notna().sum() if 'gpt_population' in df.columns else 0
+        st.metric("GPT Population Data", gpt_count)
+    
+    with col3:
+        pop_count = ((df['gpt_population'].notna()) & (df['gpt_population'] > 0)).sum() if 'gpt_population' in df.columns else 0
+        st.metric("Population Assigned", pop_count)
+    
+    with col4:
+        clean_count = ((df['gpt_population'].notna()) & (df['gpt_population'] > 10000)).sum() if 'gpt_population' in df.columns else 0
+        st.metric("Locations > 10K", clean_count)
+    
+    # Display map with locations and polygon boundary
+    st.subheader("🗺️ Location Map")
+    
+    # Prepare location data for map
+    map_df = df[['latitude', 'longitude', 'name']].dropna()
+    
+    if len(map_df) > 0:
+        # Calculate center of locations
+        center_lat = map_df['latitude'].mean()
+        center_lon = map_df['longitude'].mean()
+        
+        # Create layers
+        layers = []
+        
+        # Add polygon layer if we have polygon points
+        if st.session_state.polygon_points:
+            # Convert polygon points to the format pydeck expects (list of [lon, lat])
+            polygon_coords = [[pt[0], pt[1]] for pt in st.session_state.polygon_points]
+            # Close the polygon
+            if polygon_coords[0] != polygon_coords[-1]:
+                polygon_coords.append(polygon_coords[0])
+            
+            polygon_layer = pdk.Layer(
+                "PolygonLayer",
+                data=[{"polygon": polygon_coords}],
+                get_polygon="polygon",
+                get_fill_color=[31, 119, 180, 50],  # Blue with transparency
+                get_line_color=[31, 119, 180, 255],  # Solid blue outline
+                line_width_min_pixels=2,
+                pickable=False,
+            )
+            layers.append(polygon_layer)
+        
+        # Add scatter plot layer for locations
+        scatter_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position=["longitude", "latitude"],
+            get_color=[255, 87, 51, 200],  # Orange-red
+            get_radius=300,
+            radius_min_pixels=3,
+            radius_max_pixels=10,
+            pickable=True,
+        )
+        layers.append(scatter_layer)
+        
+        # Create the deck
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=pdk.ViewState(
+                latitude=center_lat,
+                longitude=center_lon,
+                zoom=config.MAP_DEFAULT_ZOOM,
+                pitch=config.MAP_DEFAULT_PITCH,
+            ),
+            map_style=config.MAP_STYLE,
+            tooltip={"text": "{name}"}
+        )
+        
+        st.pydeck_chart(deck)
+    
+    # Add search/filter
+    st.subheader("Location Data")
+    search_term = st.text_input("Search locations", placeholder="Type to filter by name...")
+    
+    if search_term:
+        df_display = df_display[df_display['Name'].str.contains(search_term, case=False, na=False)]
+    
+    # Display table with sorting
+    st.dataframe(
+        df_display,
+        width='stretch',
+        height=400,
+        hide_index=True
+    )
+    
+    # Download button
+    if st.session_state.excel_data is not None:
+        st.download_button(
+            label="📥 Download Excel File",
+            data=st.session_state.excel_data,
+            file_name=f"{uploaded_file.name.replace('.kmz', '')}_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width='stretch'
+        )
+
+# Collapsible log section at bottom (closed by default)
+st.divider()
+with st.expander("📋 Processing Log (click to expand)", expanded=False):
+    all_messages = st.session_state.progress_messages + st.session_state.status_messages
+    if all_messages:
+        log_text = "\n".join(all_messages)
+        st.code(log_text, language=None)
+        st.caption("Copy this log if you need to report any issues")
+    else:
+        st.info("Log will appear here once processing starts.")
+
+# Footer
+st.divider()
+st.markdown("""
+    <div style='text-align: center; color: #888; padding: 2rem;'>
+        <p>Built with Streamlit | Uses OpenStreetMap and OpenAI GPT</p>
+    </div>
+""", unsafe_allow_html=True)
